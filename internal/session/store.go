@@ -78,6 +78,39 @@ func Save(s *Session) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+// ExportSession writes a session's JSON to destPath verbatim.
+// The file is self-contained and can be committed to version control.
+func ExportSession(sessionID, destPath string) error {
+	data, err := os.ReadFile(sessionPath(sessionID))
+	if err != nil {
+		return fmt.Errorf("session %s not found: %w", sessionID, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(destPath, data, 0o644)
+}
+
+// ImportSession reads a session JSON from srcPath, assigns it a fresh local
+// session ID to avoid collisions, and saves it to the XDG store.
+// Returns the new session so the caller can relay the new ID to the user.
+func ImportSession(srcPath string) (*Session, string, error) {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("cannot read %s: %w", srcPath, err)
+	}
+	var s Session
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, "", fmt.Errorf("invalid session file: %w", err)
+	}
+	originalID := s.ID
+	s.ID = newID("ses")
+	if err := Save(&s); err != nil {
+		return nil, "", err
+	}
+	return &s, originalID, nil
+}
+
 func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string) (*Session, *Event, error) {
 	s, err := Load(sessionID)
 	if err != nil {

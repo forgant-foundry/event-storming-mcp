@@ -31,6 +31,8 @@ func New() *server.MCPServer {
 	s.AddTool(lintStepsTool(), handleLintSteps)
 	s.AddTool(listPlaybooksTool(), handleListPlaybooks)
 	s.AddTool(getPlaybookTool(), handleGetPlaybook)
+	s.AddTool(exportSessionTool(), handleExportSession)
+	s.AddTool(importSessionTool(), handleImportSession)
 
 	return s
 }
@@ -532,4 +534,62 @@ func handleGetPlaybook(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 		return libmcp.NewToolResultError(fmt.Sprintf("playbook %q not found; call list_playbooks to see available slugs", slug)), nil
 	}
 	return libmcp.NewToolResultText(p.Content), nil
+}
+
+func exportSessionTool() libmcp.Tool {
+	return libmcp.NewTool("export_session",
+		libmcp.WithDescription("Export a session to a portable JSON file. Commit this file to version control to share the session with teammates or resume it on another machine."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("path",
+			libmcp.Required(),
+			libmcp.Description("Destination file path (e.g. '.event-storming/checkout.json')"),
+		),
+	)
+}
+
+func handleExportSession(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	path, err := req.RequireString("path")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	if err := session.ExportSession(sessionID, path); err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	s, _ := session.Load(sessionID)
+	return resultJSON(map[string]any{
+		"path":       path,
+		"session_id": sessionID,
+		"name":       s.Name,
+	})
+}
+
+func importSessionTool() libmcp.Tool {
+	return libmcp.NewTool("import_session",
+		libmcp.WithDescription("Import a session from a portable JSON file. Assigns a fresh local session ID to avoid collisions. Use the returned session_id for all subsequent calls."),
+		libmcp.WithString("path",
+			libmcp.Required(),
+			libmcp.Description("Path to an exported session JSON file"),
+		),
+	)
+}
+
+func handleImportSession(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	s, originalID, err := session.ImportSession(path)
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(map[string]any{
+		"session_id":          s.ID,
+		"original_session_id": originalID,
+		"name":                s.Name,
+		"description":         s.Description,
+	})
 }

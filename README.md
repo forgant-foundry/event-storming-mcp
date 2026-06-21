@@ -119,6 +119,12 @@ output files.
 |---|---|
 | `emit_gherkin` | Write .feature files, glossary.md, and context-map.json |
 
+### Portability
+| Tool | Description |
+|---|---|
+| `export_session` | Write session to a JSON file for version control or sharing |
+| `import_session` | Load a session from an exported file; returns a new local session ID |
+
 ### Playbooks
 | Tool | Description |
 |---|---|

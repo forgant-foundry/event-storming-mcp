@@ -1,6 +1,7 @@
 package session_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/forgant-foundry/event-storming-mcp/internal/session"
@@ -82,6 +83,51 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	if loaded.Glossary[0].Definition != "Updated definition" {
 		t.Errorf("upsert should update definition: got %q", loaded.Glossary[0].Definition)
+	}
+}
+
+func TestExportImport(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	s, _ := session.New("Export test", "A session to export")
+	session.AddActor(s.ID, "User", session.ActorTypePerson, "")
+	session.DefineTerm(s.ID, "Widget", "A thing", "the widget", "", nil)
+
+	exportPath := t.TempDir() + "/session.json"
+	if err := session.ExportSession(s.ID, exportPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// File must exist and be valid JSON
+	if _, err := os.Stat(exportPath); err != nil {
+		t.Fatal("export file not created")
+	}
+
+	// Import gives a fresh session ID
+	imported, originalID, err := session.ImportSession(exportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imported.ID == s.ID {
+		t.Error("import should assign a new session ID")
+	}
+	if originalID != s.ID {
+		t.Errorf("originalID: got %s, want %s", originalID, s.ID)
+	}
+	if imported.Name != "Export test" {
+		t.Errorf("name not preserved: got %q", imported.Name)
+	}
+
+	// Imported session is persisted and loadable
+	loaded, err := session.Load(imported.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Actors) != 1 {
+		t.Errorf("actors not preserved: got %d", len(loaded.Actors))
+	}
+	if len(loaded.Glossary) != 1 {
+		t.Errorf("glossary not preserved: got %d", len(loaded.Glossary))
 	}
 }
 
