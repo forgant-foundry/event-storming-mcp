@@ -58,7 +58,7 @@ been through at least three rounds of probing with no new events.
 **Goal:** Add the who, what, and why behind each event. Order the events into a rough
 timeline.
 
-### 2a — Commands and Actors
+### 2a — Commands, Actors, and Rejection Paths
 
 Work through the events in rough timeline order. For each event, ask:
 
@@ -79,6 +79,26 @@ If the actor is not yet recorded, call `add_actor` first, then pass its ID to
 `add_command`.
 
 For preconditions, ask: "What must be true before this command can succeed?"
+
+**Immediately after capturing preconditions**, ask for each one:
+
+> "What should the aggregate do if [precondition] is *not* met?"
+
+For each rejection path identified:
+
+1. Name the rejection event in PascalCase (`TransactionRejected`,
+   `AccountClosureRefused`, `DuplicateEntryDetected`)
+2. Call `add_event` with `trigger_command_id` set to this command
+3. Call `set_event_condition` with the negated precondition text
+   (e.g. `"the account is closed"`, `"the entry does not exist"`)
+
+The emitter will produce a separate `Scenario` block per rejection path, with
+the condition as an additional `Given` step. This turns invariants that surfaced
+as preconditions into runnable specs — not just implicit constraints in the
+happy-path `Given` steps.
+
+If the expert is unsure of the rejection event name, use a placeholder like
+`[CommandName]Rejected` and flag it with `add_hot_spot`.
 
 ### 2b — Policies
 
