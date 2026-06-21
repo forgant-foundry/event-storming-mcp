@@ -75,7 +75,32 @@ func Save(s *Session) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	if s.SyncPath != "" {
+		if err := os.MkdirAll(filepath.Dir(s.SyncPath), 0o755); err != nil {
+			return fmt.Errorf("sync path mkdir: %w", err)
+		}
+		if err := os.WriteFile(s.SyncPath, data, 0o644); err != nil {
+			return fmt.Errorf("sync path write: %w", err)
+		}
+	}
+	return nil
+}
+
+// SetSyncPath configures a project-local file that is kept in sync with every
+// save. Pass an empty string to disable syncing.
+func SetSyncPath(sessionID, syncPath string) (*Session, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	s.SyncPath = syncPath
+	if err := Save(s); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // ExportSession writes a session's JSON to destPath verbatim.

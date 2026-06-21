@@ -33,6 +33,7 @@ func New() *server.MCPServer {
 	s.AddTool(getPlaybookTool(), handleGetPlaybook)
 	s.AddTool(exportSessionTool(), handleExportSession)
 	s.AddTool(importSessionTool(), handleImportSession)
+	s.AddTool(setSyncPathTool(), handleSetSyncPath)
 
 	return s
 }
@@ -56,6 +57,9 @@ func startSessionTool() libmcp.Tool {
 			libmcp.Required(),
 			libmcp.Description("One or two sentences describing the domain being explored"),
 		),
+		libmcp.WithString("sync_path",
+			libmcp.Description("Optional project-local file path to keep in sync on every save (e.g. '.event-storming/checkout.json'). Commit this file to share the session."),
+		),
 	)
 }
 
@@ -68,10 +72,17 @@ func handleStartSession(_ context.Context, req libmcp.CallToolRequest) (*libmcp.
 	if err != nil {
 		return libmcp.NewToolResultError(fmt.Sprintf("could not create session: %v", err)), nil
 	}
+	if syncPath := req.GetString("sync_path", ""); syncPath != "" {
+		s, err = session.SetSyncPath(s.ID, syncPath)
+		if err != nil {
+			return libmcp.NewToolResultError(fmt.Sprintf("could not set sync path: %v", err)), nil
+		}
+	}
 	return resultJSON(map[string]any{
 		"session_id":  s.ID,
 		"name":        s.Name,
 		"description": s.Description,
+		"sync_path":   s.SyncPath,
 		"created_at":  s.CreatedAt,
 	})
 }
@@ -591,5 +602,35 @@ func handleImportSession(_ context.Context, req libmcp.CallToolRequest) (*libmcp
 		"original_session_id": originalID,
 		"name":                s.Name,
 		"description":         s.Description,
+	})
+}
+
+func setSyncPathTool() libmcp.Tool {
+	return libmcp.NewTool("set_sync_path",
+		libmcp.WithDescription("Configure a project-local file that is kept in sync with every save going forward. Pass an empty string to disable. Useful for enabling live sync on a session that was started without one."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("path",
+			libmcp.Required(),
+			libmcp.Description("Project-local file path (e.g. '.event-storming/checkout.json'), or empty string to disable"),
+		),
+	)
+}
+
+func handleSetSyncPath(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	path, err := req.RequireString("path")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	s, err := session.SetSyncPath(sessionID, path)
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(map[string]any{
+		"session_id": s.ID,
+		"sync_path":  s.SyncPath,
 	})
 }

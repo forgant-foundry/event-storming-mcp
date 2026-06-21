@@ -124,6 +124,7 @@ output files.
 |---|---|
 | `export_session` | Write session to a JSON file for version control or sharing |
 | `import_session` | Load a session from an exported file; returns a new local session ID |
+| `set_sync_path` | Configure a project-local file to stay in sync on every save |
 
 ### Playbooks
 | Tool | Description |

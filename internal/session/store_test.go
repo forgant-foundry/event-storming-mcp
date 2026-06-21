@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/forgant-foundry/event-storming-mcp/internal/session"
@@ -83,6 +84,34 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	if loaded.Glossary[0].Definition != "Updated definition" {
 		t.Errorf("upsert should update definition: got %q", loaded.Glossary[0].Definition)
+	}
+}
+
+func TestSyncPath(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	syncFile := t.TempDir() + "/.event-storming/session.json"
+
+	s, _ := session.New("Sync test", "")
+	session.SetSyncPath(s.ID, syncFile)
+
+	// Adding an event should dual-write.
+	session.AddEvent(s.ID, "ThingHappened", "", "", "")
+
+	data, err := os.ReadFile(syncFile)
+	if err != nil {
+		t.Fatalf("sync file not written: %v", err)
+	}
+	if !strings.Contains(string(data), "ThingHappened") {
+		t.Error("sync file missing ThingHappened event")
+	}
+
+	// Disabling sync path stops dual-writes.
+	session.SetSyncPath(s.ID, "")
+	session.AddEvent(s.ID, "AnotherThing", "", "", "")
+
+	data2, _ := os.ReadFile(syncFile)
+	if strings.Contains(string(data2), "AnotherThing") {
+		t.Error("sync file should not have been updated after path was cleared")
 	}
 }
 
