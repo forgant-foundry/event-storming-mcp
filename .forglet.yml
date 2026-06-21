@@ -1,0 +1,18 @@
+name: event-storming-mcp
+template: go
+module: "github.com/forgant-foundry/event-storming-mcp"
+require:
+  github.com/mark3labs/mcp-go: "v0.54.0"
+  github.com/spf13/cobra: "v1.8.0"
+git: true
+gitignore:
+  - .env
+
+license:
+  id: MIT
+  author: Forgant
+
+github:
+  ci: true
+  delivery:
+    kind: binary
