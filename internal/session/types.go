@@ -17,6 +17,7 @@ type Event struct {
 	AggregateID      string    `json:"aggregate_id,omitempty"`
 	ContextID        string    `json:"context_id,omitempty"`
 	Notes            string    `json:"notes,omitempty"`
+	Condition        string    `json:"condition,omitempty"` // non-empty = conditionally emitted; emitted as a separate Scenario with this as an additional Given
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -65,21 +66,24 @@ type ExternalSystem struct {
 }
 
 type HotSpot struct {
-	ID        string    `json:"id"`
-	Question  string    `json:"question"`
-	ContextID string    `json:"context_id,omitempty"`
-	Resolved  bool      `json:"resolved"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Question   string    `json:"question"`
+	ContextID  string    `json:"context_id,omitempty"`
+	Resolved   bool      `json:"resolved"`
+	Resolution string    `json:"resolution,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Aggregate struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	ContextID  string    `json:"context_id,omitempty"`
-	CommandIDs []string  `json:"command_ids,omitempty"`
-	EventIDs   []string  `json:"event_ids,omitempty"`
-	Notes      string    `json:"notes,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	ContextID         string    `json:"context_id,omitempty"`
+	CommandIDs        []string  `json:"command_ids,omitempty"`
+	EventIDs          []string  `json:"event_ids,omitempty"`
+	Notes             string    `json:"notes,omitempty"`
+	Deprecated        bool      `json:"deprecated,omitempty"`
+	DeprecationReason string    `json:"deprecation_reason,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type BoundedContext struct {

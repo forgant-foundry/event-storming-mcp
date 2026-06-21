@@ -124,15 +124,27 @@ func buildFeature(
 ) (content string, warnings []string, scenarioCount int) {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("@context:%s @aggregate:%s\n", ctxTag, agg.Name))
+	tags := fmt.Sprintf("@context:%s @aggregate:%s", ctxTag, agg.Name)
+	if agg.Deprecated {
+		tags += " @deprecated"
+	}
+	b.WriteString(tags + "\n")
 	b.WriteString(fmt.Sprintf("Feature: %s\n", agg.Name))
+	if agg.Deprecated {
+		reason := agg.DeprecationReason
+		if reason == "" {
+			reason = "no reason given"
+		}
+		b.WriteString(fmt.Sprintf("\n  # Deprecated: %s\n", reason))
+		return b.String(), warnings, 0
+	}
 	if agg.Notes != "" {
 		b.WriteString(fmt.Sprintf("\n  %s\n", agg.Notes))
 	}
 
 	for _, cmd := range commands {
-		events := eventsByCmd[cmd.ID]
-		if len(events) == 0 {
+		allEvents := eventsByCmd[cmd.ID]
+		if len(allEvents) == 0 {
 			warnings = append(warnings, fmt.Sprintf(
 				"command %q (%s) has no linked events — scenario omitted; add events with trigger_command_id=%s",
 				cmd.Name, cmd.ID, cmd.ID,
@@ -140,26 +152,60 @@ func buildFeature(
 			continue
 		}
 
-		scenarioCount++
 		actor := actorByID[cmd.ActorID]
 
-		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf("  Scenario: %s\n", ScenarioTitle(cmd.Name, actor.Name)))
-		for _, pre := range cmd.Preconditions {
-			b.WriteString(fmt.Sprintf("    Given %s\n", pre))
-		}
-		b.WriteString(fmt.Sprintf("    When %s\n", WhenStep(cmd.Name, actor.Name)))
-		for i, evt := range events {
-			kw := "Then"
-			if i > 0 {
-				kw = "And "
+		// Partition into unconditional (happy-path) and conditional events.
+		var unconditional, conditional []session.Event
+		for _, e := range allEvents {
+			if e.Condition == "" {
+				unconditional = append(unconditional, e)
+			} else {
+				conditional = append(conditional, e)
 			}
-			b.WriteString(fmt.Sprintf("    %s %s\n", kw, ThenStep(evt.Name)))
+		}
+
+		// Happy-path scenario (unconditional events only).
+		if len(unconditional) > 0 {
+			scenarioCount++
+			b.WriteString("\n")
+			b.WriteString(fmt.Sprintf("  Scenario: %s\n", ScenarioTitle(cmd.Name, actor.Name)))
+			for _, pre := range cmd.Preconditions {
+				b.WriteString(fmt.Sprintf("    Given %s\n", pre))
+			}
+			b.WriteString(fmt.Sprintf("    When %s\n", WhenStep(cmd.Name, actor.Name)))
+			for i, evt := range unconditional {
+				kw := "Then"
+				if i > 0 {
+					kw = "And "
+				}
+				b.WriteString(fmt.Sprintf("    %s %s\n", kw, ThenStep(evt.Name)))
+			}
+		}
+
+		// One extra scenario per conditional event.
+		for _, evt := range conditional {
+			scenarioCount++
+			b.WriteString("\n")
+			title := ScenarioTitle(cmd.Name, actor.Name) + " (" + strings.ToLower(evt.Condition) + ")"
+			b.WriteString(fmt.Sprintf("  Scenario: %s\n", title))
+			for _, pre := range cmd.Preconditions {
+				b.WriteString(fmt.Sprintf("    Given %s\n", pre))
+			}
+			b.WriteString(fmt.Sprintf("    And %s\n", evt.Condition))
+			b.WriteString(fmt.Sprintf("    When %s\n", WhenStep(cmd.Name, actor.Name)))
+			b.WriteString(fmt.Sprintf("    Then %s\n", ThenStep(evt.Name)))
+		}
+
+		// If every event was conditional, warn that there is no happy-path scenario.
+		if len(unconditional) == 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"command %q has only conditional events — no happy-path scenario emitted",
+				cmd.Name,
+			))
 		}
 	}
 
-	// If no commands were emitted but events exist, emit a stub so the file
-	// still shows up and the LLM knows to link commands.
+	// If no commands were emitted but events exist, emit a stub.
 	if scenarioCount == 0 {
 		if len(aggEvents) > 0 {
 			warnings = append(warnings, fmt.Sprintf(

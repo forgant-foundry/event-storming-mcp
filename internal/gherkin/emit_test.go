@@ -176,6 +176,77 @@ func TestEmit_WarnOnCommandWithNoEvents(t *testing.T) {
 	}
 }
 
+func TestEmit_DeprecatedAggregate(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, evt, _ := session.AddEvent(s.ID, "PeriodClosed", "", "", "")
+	_, agg, _ := session.ClusterAggregate(s.ID, "", "", "", []string{evt.ID}, nil)
+	session.DeprecateAggregate(s.ID, agg.ID, "snapshots made this redundant")
+
+	loaded, _ := session.Load(s.ID)
+	outDir := t.TempDir()
+	sum, err := gherkin.Emit(loaded, outDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(sum.FeatureFiles[0])
+	content := string(data)
+	if !strings.Contains(content, "@deprecated") {
+		t.Error("deprecated aggregate should have @deprecated tag")
+	}
+	if strings.Contains(content, "Scenario:") {
+		t.Error("deprecated aggregate should not emit scenarios")
+	}
+	if sum.ScenarioCount != 0 {
+		t.Errorf("scenario count should be 0 for deprecated aggregate, got %d", sum.ScenarioCount)
+	}
+}
+
+func TestEmit_ConditionalEvent(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, actor, _ := session.AddActor(s.ID, "User", session.ActorTypePerson, "")
+	_, cmd, _ := session.AddCommand(s.ID, "ProcessPayment", "", actor.ID, "", nil)
+	_, evtOk, _ := session.AddEvent(s.ID, "PaymentProcessed", "", cmd.ID, "")
+	_, evtFail, _ := session.AddEvent(s.ID, "PaymentDeclined", "", cmd.ID, "")
+	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid")
+	session.ClusterAggregate(s.ID, "Payment", "", "", []string{evtOk.ID, evtFail.ID}, []string{cmd.ID})
+
+	loaded, _ := session.Load(s.ID)
+	outDir := t.TempDir()
+	sum, err := gherkin.Emit(loaded, outDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(sum.FeatureFiles[0])
+	content := string(data)
+
+	if sum.ScenarioCount != 2 {
+		t.Errorf("expected 2 scenarios (happy path + conditional), got %d", sum.ScenarioCount)
+	}
+	if !strings.Contains(content, "the payment method is invalid") {
+		t.Error("conditional event's condition should appear as a Given step")
+	}
+}
+
+func TestSlug_SpaceSeparated(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Ledger Management", "ledger-management"},
+		{"BoundedContext", "bounded-context"},
+		{"Order", "order"},
+		{"ledger management", "ledger-management"},
+		{"Ledger_Management", "ledger-management"},
+	}
+	for _, tc := range cases {
+		got := gherkin.Slug(tc.in)
+		if got != tc.want {
+			t.Errorf("Slug(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestStyleHelpers(t *testing.T) {
 	cases := []struct {
 		fn   func() string

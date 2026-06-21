@@ -87,6 +87,73 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestResolveHotSpot(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, hs, _ := session.AddHotSpot(s.ID, "Who owns refund approval?", "")
+
+	_, resolved, err := session.ResolveHotSpot(s.ID, hs.ID, "Finance team, confirmed in ADR-12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Resolved || resolved.Resolution == "" {
+		t.Errorf("expected resolved=true and non-empty resolution: %+v", resolved)
+	}
+
+	loaded, _ := session.Load(s.ID)
+	if !loaded.HotSpots[0].Resolved {
+		t.Error("resolved state not persisted")
+	}
+
+	_, _, err = session.ResolveHotSpot(s.ID, "hs_doesnotexist", "x")
+	if err == nil {
+		t.Error("expected error for unknown hot spot ID")
+	}
+}
+
+func TestDeprecateAggregate(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, evt, _ := session.AddEvent(s.ID, "PeriodClosed", "", "", "")
+	_, agg, _ := session.ClusterAggregate(s.ID, "Period", "", "", []string{evt.ID}, nil)
+
+	_, dep, err := session.DeprecateAggregate(s.ID, agg.ID, "snapshots made period closes redundant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dep.Deprecated || dep.DeprecationReason == "" {
+		t.Errorf("expected deprecated: %+v", dep)
+	}
+
+	loaded, _ := session.Load(s.ID)
+	if !loaded.Aggregates[0].Deprecated {
+		t.Error("deprecated state not persisted")
+	}
+}
+
+func TestSetEventCondition(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, evt, _ := session.AddEvent(s.ID, "PaymentDeclined", "", "", "")
+
+	_, updated, err := session.SetEventCondition(s.ID, evt.ID, "the payment method is invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Condition != "the payment method is invalid" {
+		t.Errorf("condition not set: %q", updated.Condition)
+	}
+	if updated.ID != evt.ID {
+		t.Error("set_event_condition must not change the event ID")
+	}
+
+	// Clear condition
+	_, cleared, _ := session.SetEventCondition(s.ID, evt.ID, "")
+	if cleared.Condition != "" {
+		t.Error("condition not cleared")
+	}
+}
+
 func TestLinkEvent(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 

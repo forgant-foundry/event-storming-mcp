@@ -196,6 +196,65 @@ func AddActor(sessionID, name string, actorType ActorType, notes string) (*Sessi
 	return s, &s.Actors[len(s.Actors)-1], nil
 }
 
+// SetEventCondition marks an event as conditionally emitted with the given condition
+// text. The emitter will place it in a separate Scenario block rather than the
+// happy-path scenario for its command.
+func SetEventCondition(sessionID, eventID, condition string) (*Session, *Event, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range s.Events {
+		if s.Events[i].ID == eventID {
+			s.Events[i].Condition = condition
+			if err := Save(s); err != nil {
+				return nil, nil, err
+			}
+			return s, &s.Events[i], nil
+		}
+	}
+	return nil, nil, fmt.Errorf("event %s not found", eventID)
+}
+
+// ResolveHotSpot marks a hot spot as resolved with the given resolution text.
+func ResolveHotSpot(sessionID, hotSpotID, resolution string) (*Session, *HotSpot, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range s.HotSpots {
+		if s.HotSpots[i].ID == hotSpotID {
+			s.HotSpots[i].Resolved = true
+			s.HotSpots[i].Resolution = resolution
+			if err := Save(s); err != nil {
+				return nil, nil, err
+			}
+			return s, &s.HotSpots[i], nil
+		}
+	}
+	return nil, nil, fmt.Errorf("hot spot %s not found", hotSpotID)
+}
+
+// DeprecateAggregate marks an aggregate as deprecated. The emitter will tag its
+// feature file with @deprecated and skip scenario generation.
+func DeprecateAggregate(sessionID, aggregateID, reason string) (*Session, *Aggregate, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range s.Aggregates {
+		if s.Aggregates[i].ID == aggregateID {
+			s.Aggregates[i].Deprecated = true
+			s.Aggregates[i].DeprecationReason = reason
+			if err := Save(s); err != nil {
+				return nil, nil, err
+			}
+			return s, &s.Aggregates[i], nil
+		}
+	}
+	return nil, nil, fmt.Errorf("aggregate %s not found", aggregateID)
+}
+
 // LinkEvent sets trigger_command_id on an existing event without creating a duplicate.
 func LinkEvent(sessionID, eventID, commandID string) (*Session, *Event, error) {
 	s, err := Load(sessionID)

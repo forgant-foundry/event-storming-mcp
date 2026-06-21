@@ -23,6 +23,9 @@ func New() *server.MCPServer {
 	s.AddTool(addActorTool(), handleAddActor)
 	s.AddTool(linkEventTool(), handleLinkEvent)
 	s.AddTool(removeEventTool(), handleRemoveEvent)
+	s.AddTool(setEventConditionTool(), handleSetEventCondition)
+	s.AddTool(resolveHotSpotTool(), handleResolveHotSpot)
+	s.AddTool(deprecateAggregateTool(), handleDeprecateAggregate)
 	s.AddTool(addPolicyTool(), handleAddPolicy)
 	s.AddTool(addReadModelTool(), handleAddReadModel)
 	s.AddTool(addHotSpotTool(), handleAddHotSpot)
@@ -323,6 +326,95 @@ func handleRemoveEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	return resultJSON(map[string]any{"removed": eventID})
+}
+
+func setEventConditionTool() libmcp.Tool {
+	return libmcp.NewTool("set_event_condition",
+		libmcp.WithDescription("Mark an event as conditionally emitted. The emitter will place it in a separate Scenario block with the condition as an additional Given step, instead of merging it into the happy-path scenario for its command."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("event_id", libmcp.Required(), libmcp.Description("ID of the event to mark as conditional")),
+		libmcp.WithString("condition",
+			libmcp.Required(),
+			libmcp.Description("The condition under which this event is emitted (e.g. 'the payment method is invalid'). Pass an empty string to clear."),
+		),
+	)
+}
+
+func handleSetEventCondition(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	eventID, err := req.RequireString("event_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	condition, err := req.RequireString("condition")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	_, e, err := session.SetEventCondition(sessionID, eventID, condition)
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(e)
+}
+
+func resolveHotSpotTool() libmcp.Tool {
+	return libmcp.NewTool("resolve_hotspot",
+		libmcp.WithDescription("Mark a hot spot as resolved with the decision or answer that closed it."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("hotspot_id", libmcp.Required(), libmcp.Description("ID of the hot spot to resolve")),
+		libmcp.WithString("resolution",
+			libmcp.Required(),
+			libmcp.Description("The decision or answer that resolved this question"),
+		),
+	)
+}
+
+func handleResolveHotSpot(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	hotSpotID, err := req.RequireString("hotspot_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	resolution, err := req.RequireString("resolution")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	_, hs, err := session.ResolveHotSpot(sessionID, hotSpotID, resolution)
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(hs)
+}
+
+func deprecateAggregateTool() libmcp.Tool {
+	return libmcp.NewTool("deprecate_aggregate",
+		libmcp.WithDescription("Mark an aggregate as deprecated. The emitter will tag its feature file with @deprecated and skip scenario generation. Use when a design decision makes an aggregate unnecessary."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("aggregate_id", libmcp.Required(), libmcp.Description("ID of the aggregate to deprecate")),
+		libmcp.WithString("reason", libmcp.Description("Why this aggregate is no longer needed")),
+	)
+}
+
+func handleDeprecateAggregate(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	aggregateID, err := req.RequireString("aggregate_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	_, agg, err := session.DeprecateAggregate(sessionID, aggregateID, req.GetString("reason", ""))
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(agg)
 }
 
 func addPolicyTool() libmcp.Tool {

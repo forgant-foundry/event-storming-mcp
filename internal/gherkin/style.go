@@ -29,8 +29,18 @@ func camelWords(s string) []string {
 }
 
 // Slug converts a name to a lowercase hyphenated filename slug.
+// Handles both PascalCase ("BoundedContext" → "bounded-context") and
+// space-separated names ("Ledger Management" → "ledger-management").
 func Slug(s string) string {
-	return strings.Join(camelWords(s), "-")
+	// Normalise spaces/underscores to hyphens first, then split CamelCase words.
+	words := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '_' || r == '-'
+	})
+	var parts []string
+	for _, w := range words {
+		parts = append(parts, camelWords(w)...)
+	}
+	return strings.Join(parts, "-")
 }
 
 // WhenStep formats a command name and actor as a declarative When clause.

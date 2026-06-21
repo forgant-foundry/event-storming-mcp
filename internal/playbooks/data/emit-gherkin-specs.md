@@ -34,13 +34,15 @@ team.
 
 ## Step 1 — Choose an Output Directory
 
-Pick a path relative to the project root. Convention:
+Ask the domain expert: **"Where does your project keep its BDD specs?"**
 
-```
-features/          # typical Cucumber / Behave layout
-test/features/     # if tests live under test/
-specs/features/    # if specs live under specs/
-```
+Check for an existing directory before suggesting one:
+- Is there a `features/` directory? (typical Cucumber / Behave / godog layout)
+- Is there a `test/features/` or `spec/features/` directory?
+- Does the project have a `cucumber.yml`, `.behat.yml`, or `pytest.ini` that names a path?
+
+Use whatever the project already has. Only default to `features/` if none of the above
+exist. Do not use `.event-storming/` or any other tool-internal path.
 
 ---
 
