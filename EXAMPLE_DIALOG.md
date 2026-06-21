@@ -1,257 +1,112 @@
-# Example Dialog: Event Storming a Chat App
+# Example Dialog: finant-api
 
-This is an example conversation between an LLM facilitator and a domain expert,
-showing how the MCP tools are called during a live event storming session.
-
----
-
-## Session Setup
-
-**LLM:** Let's run an event storming session on your chat app. I'll start by capturing
-everything, then we'll cluster it into a model. In a sentence or two — what's the core domain?
-
-**Expert:** It's a team messaging app. Users send messages in channels, can DM each other,
-and get push notifications when mentioned.
-
-```json
-// start_session
-{ "name": "Team messaging app",
-  "description": "Real-time team messaging with channels, DMs, and mention notifications" }
-// → { "session_id": "ses_4a1b2c3d", ... }
-```
+A real session conducted with Claude Code using the `run-event-storming` playbook.
+Domain: an event-sourced personal finance tracker API.
+Output: 8 feature files, a glossary, and a context map committed to `specs/`.
 
 ---
 
-## Phase 1 — Big Picture Event Discovery
+## Setup
 
-**LLM:** Phase 1 — just throw events at me. Things that *happened* in the system, past
-tense. Don't worry about order yet.
+**User:** Wire up the MCP tool `~/go/bin/event-storming-mcp`, please.
 
-**Expert:** Message was sent. User joined a channel. User got mentioned. Notification was delivered.
-
-```json
-// add_event x4
-{ "session_id": "ses_4a1b2c3d", "name": "MessageSent" }        // → evt_001
-{ "session_id": "ses_4a1b2c3d", "name": "UserJoinedChannel" }   // → evt_002
-{ "session_id": "ses_4a1b2c3d", "name": "UserMentioned" }       // → evt_003
-{ "session_id": "ses_4a1b2c3d", "name": "NotificationDelivered" } // → evt_004
-```
-
-**LLM:** Good. Keep going — what else happens?
-
-**Expert:** Message was read. User went offline. Channel was created. User was removed
-from a channel. Message was deleted.
-
-```json
-{ "session_id": "ses_4a1b2c3d", "name": "MessageRead" }             // → evt_005
-{ "session_id": "ses_4a1b2c3d", "name": "UserWentOffline" }         // → evt_006
-{ "session_id": "ses_4a1b2c3d", "name": "ChannelCreated" }          // → evt_007
-{ "session_id": "ses_4a1b2c3d", "name": "UserRemovedFromChannel" }  // → evt_008
-{ "session_id": "ses_4a1b2c3d", "name": "MessageDeleted" }          // → evt_009
-```
-
-**LLM:** What about the notification side — any events there beyond delivery?
-
-**Expert:** Notification was sent, and sometimes a notification fails to deliver if the
-device is offline.
-
-```json
-{ "session_id": "ses_4a1b2c3d", "name": "NotificationSent" }   // → evt_010
-{ "session_id": "ses_4a1b2c3d", "name": "NotificationFailed" } // → evt_011
-```
+*(Facilitator registered the MCP server, fetched the `run-event-storming` playbook, started a session, and configured `sync_path` to `.event-storming/finant-api.json`.)*
 
 ---
 
-## Phase 2 — Process Modeling
+## Phase 1 — Big Picture (Domain Event Discovery)
 
-### Actors
+**Facilitator:** Let's start with what this system does. What's the core domain?
 
-**LLM:** Phase 2 — let's add the actors and commands. Who does things in this system?
+**User:** This is an API responsible for an event-sourced finance tracker. Help me establish specifications for it using an event storming approach.
 
-**Expert:** Regular users do most things. Admins can remove people from channels. The push
-notification service is external — Firebase or APNs.
+**Facilitator:** Let's start with what *happens* in this system — domain events in past tense. What are the main things that occur? Think about accounts, money moving, time passing.
 
-```json
-// add_actor x3
-{ "session_id": "ses_4a1b2c3d", "name": "User",                     "type": "person" }          // → act_001
-{ "session_id": "ses_4a1b2c3d", "name": "Admin",                    "type": "role" }             // → act_002
-{ "session_id": "ses_4a1b2c3d", "name": "Push Notification Service","type": "external_system" }  // → act_003
-```
+**User:** Accounts, transactions, budgets, categories, recurring entries.
 
-### Commands
+**Facilitator:** Good starting points. Accounts — what happens to them over their lifetime? What does "moving money" look like? What happens at the end of a month?
 
-**LLM:** Now commands — the actions that cause those events. What does a User do?
+**User:** Accounts can be opened and closed. Transfers between accounts can be made — like checking to credit card, or savings to a loan. Transactions can be recorded, reversed, categorized. Transactions are given a mixed percent of fixed/variable. Budgets are not necessarily the point — it's more "projections." Combined with recurring entries like paychecks, mortgage payments, or subscriptions, the system projects out each month for the next 12 months. Categories are less important; more important is fixed/variable — entertainment is often 100% variable, a natural gas utility bill is often 100% fixed. Recurring entries are anticipated in the future for projections, and applied when they're realized/actualized in the present.
 
-**Expert:** Send a message, join a channel, leave a channel, mark a message as read,
-delete their own message.
+*(Facilitator captured ~20 events: AccountOpened, AccountClosed, TransferInitiated, TransactionRecorded, TransactionCategorized, TransactionVariabilitySet, ProjectionRolled, RecurringEntryScheduled, RecurringEntryActualized, etc.)*
 
-```json
-// add_command x5
-{ "session_id": "ses_4a1b2c3d", "name": "SendMessage",     "actor_id": "act_001",
-  "preconditions": ["user is a member of the channel"] }                            // → cmd_001
-{ "session_id": "ses_4a1b2c3d", "name": "JoinChannel",     "actor_id": "act_001" } // → cmd_002
-{ "session_id": "ses_4a1b2c3d", "name": "LeaveChannel",    "actor_id": "act_001" } // → cmd_003
-{ "session_id": "ses_4a1b2c3d", "name": "MarkMessageRead", "actor_id": "act_001" } // → cmd_004
-{ "session_id": "ses_4a1b2c3d", "name": "DeleteMessage",   "actor_id": "act_001",
-  "preconditions": ["user is the author"] }                                          // → cmd_005
-```
+**Facilitator:** What happens when things go wrong? And what happens at the very end of a month or year?
 
-**LLM:** What can an Admin do beyond what a regular User can?
+**User:** For recurring entries, when actualized they're immediately applied as actual, but a manual actual can later be applied — the original estimate is considered just that. Accounts can absolutely go negative — we may even see it in projections. When I mentioned "reversals" earlier — it's more that we're making corrections. Given this is event sourcing, a correction event is created on the day it's recorded but applied on a day in the past, defaulting to the original transaction's date.
 
-**Expert:** Create channels, remove users from channels.
+For users and households: instead of users there is a *ledger* which one or more users may be "accountants." A ledger holds a collection of accounts.
 
-```json
-{ "session_id": "ses_4a1b2c3d", "name": "CreateChannel",         "actor_id": "act_002" } // → cmd_006
-{ "session_id": "ses_4a1b2c3d", "name": "RemoveUserFromChannel", "actor_id": "act_002" } // → cmd_007
-```
+Let's not worry about categories for now. The 12-month window rolls forward automatically. Event sourcing requires those monthly projections to be re-created as either an aggregate or snapshot. We even do snapshots in the past for read performance on recent event streams.
 
-### Policies
+This also includes investment accounts and mortgage accounts — for those we'll occasionally need to collect actuals from elsewhere. We'll also want to apply "fantasies" to the ledger — for instance, what our investment balance would look like if we hadn't performed a sell 2 months ago.
 
-**LLM:** I see `UserMentioned` and `NotificationSent` — how does that flow work? Is it a
-policy? "Whenever a message is sent and contains a mention, then send a notification"?
+*(Facilitator captured remaining events: AccountOverdrafted, CorrectionRecorded, TransactionReversed, LedgerCreated, AccountantAssigned, ProjectedOverdraftDetected, FantasyCreated, FantasyApplied, ExternalBalanceSynced, ProjectionSnapshotTaken, etc.)*
 
-**Expert:** Exactly. It's automatic. The system detects mentions and fires off notifications.
+**Facilitator:** For fantasies on investment accounts — do we need to track individual holdings (shares), or can we operate on dollar amounts directly?
 
-**LLM:** I don't have a "SendNotification" command yet — is that issued by the system or
-the Push Notification Service?
-
-**Expert:** The system issues it; the Push Notification Service executes it externally.
-
-```json
-// add_command
-{ "session_id": "ses_4a1b2c3d", "name": "SendNotification", "actor_id": "act_003" } // → cmd_008
-
-// add_policy
-{ "session_id": "ses_4a1b2c3d",
-  "name": "Notify on mention",
-  "trigger_event_id": "evt_001",
-  "resulting_command_id": "cmd_008" } // → pol_001
-```
-
-### Hot Spots
-
-**LLM:** One open question: `NotificationFailed` — is there a retry policy, or does that
-get surfaced to the user as "delivered to X of Y devices"?
-
-**Expert:** Honestly, we haven't decided yet. Firebase handles retries but we're not sure
-what we surface.
-
-```json
-// add_hot_spot
-{ "session_id": "ses_4a1b2c3d",
-  "question": "NotificationFailed: do we retry? Do we surface per-device delivery status to the sender?" }
-// → hs_001
-```
+**User:** I think we can operate on dollar amounts directly and not track shares. For now we'll be manually performing the sync. I just mean that this domain service will support a user at a UI viewing a dashboard of the ledger's current state and some projection into the immediate future (1, 2, or 3 months).
 
 ---
 
-## Phase 3 — Software Design
+## Phase 2 — Process Modeling (Commands, Actors, Policies)
 
-### Aggregates
+**Facilitator:** Let's move to Phase 2. Hot spot triage first. I flagged several open questions:
 
-**LLM:** Let's cluster. I see three natural aggregates: **Message** (sending, reading,
-deleting), **Channel** (membership, creation), and **User** (presence). Does that match
-your mental model?
+*1. Should a period close be an explicit event?*
+*3. Does a variability change trigger a projection recalculation?*
+*4. Is a "reversal" different from a "correction"?*
+*5. Is projection recalculation synchronous or async?*
+*7. Does RecurringEntryActualized also record a transaction, or is that separate?*
+*8. What triggers a period to be "closed" for correction?*
+*9. Do we need explicit period aggregates?*
 
-**Expert:** Yes. Though I'd call the third one just "User" — presence is part of the
-user's state.
+**User:** 1. One event. 3. Not per category, but yes on recurring — applied at individual transactions. 4. Both are an "adjustment"; reverse/corrected are types of adjustments. 5. Parallel, and multiple are possible. 7. Both. 8. Instead let's not have a close strength — I don't think we even need a period closure. Our snapshots/aggregates accommodate that. 9. Unnecessary.
 
-```json
-// cluster_aggregate x3
-{ "session_id": "ses_4a1b2c3d", "name": "Message",
-  "event_ids":   ["evt_001", "evt_005", "evt_009"],
-  "command_ids": ["cmd_001", "cmd_004", "cmd_005"] } // → agg_001
+*(Facilitator resolved hot spots and deprecated the Period aggregate. Captured ~31 commands: OpenAccount, CloseAccount, RecordTransaction, RecordCorrection, InitiateTransfer, ScheduleRecurringEntry, ActualizeRecurringEntry, ApplyRecurringEntryActual, AmendRecurringEntry, SkipRecurringEntry, PauseRecurringEntry, ResumeRecurringEntry, CancelRecurringEntry, RollMonthlyProjection, RecalculateProjection, TakeProjectionSnapshot, CreateLedger, AssignAccountant, RemoveAccountant, AddAccountToLedger, SyncExternalBalance, RecordInvestmentHolding, CreateFantasy, AmendFantasy, ApplyFantasy, RemoveFantasy.)*
 
-{ "session_id": "ses_4a1b2c3d", "name": "Channel",
-  "event_ids":   ["evt_002", "evt_007", "evt_008"],
-  "command_ids": ["cmd_002", "cmd_003", "cmd_006", "cmd_007"] } // → agg_002
+**Facilitator:** Is a recurring entry just a type of transaction?
 
-{ "session_id": "ses_4a1b2c3d", "name": "User",
-  "event_ids":   ["evt_006"],
-  "command_ids": [] } // → agg_003
-```
+**User:** Perhaps I'm getting into too much implementation detail. You're looking for the domain-driven / behavior-driven artifacts. Let's keep it separate.
 
-**LLM:** Where does notification live? `NotificationSent`, `NotificationDelivered`,
-`NotificationFailed` — is that a fourth aggregate or a separate service entirely?
+**Facilitator:** Noted — RecurringEntry stays as its own aggregate. Moving on to policies...
 
-**Expert:** Separate. It's a bounded context on its own. We might replace Firebase with
-something else later.
-
-```json
-{ "session_id": "ses_4a1b2c3d", "name": "Notification",
-  "event_ids":   ["evt_003", "evt_004", "evt_010", "evt_011"],
-  "command_ids": ["cmd_008"] } // → agg_004
-```
-
-### Ubiquitous Language
-
-**LLM:** Let's lock down the language before we propose contexts. What's a "channel"
-precisely — does it cover DMs?
-
-**Expert:** A channel is any named conversation space. DMs are just private channels with
-exactly two members. We call them the same thing internally.
-
-```json
-// define_term x3
-{ "session_id": "ses_4a1b2c3d",
-  "term": "Channel",
-  "definition": "A named conversation space. DMs are private channels with exactly two members.",
-  "canonical_phrasing": "the channel" }
-
-{ "session_id": "ses_4a1b2c3d",
-  "term": "Message",
-  "definition": "A text payload sent by a user into a channel at a point in time.",
-  "canonical_phrasing": "the message" }
-
-{ "session_id": "ses_4a1b2c3d",
-  "term": "Mention",
-  "definition": "An explicit @reference to a user within a message body that triggers notification.",
-  "canonical_phrasing": "the mention" }
-```
-
-### Bounded Contexts
-
-**LLM:** Now bounded contexts. I see two: **Messaging** (Message + Channel + User) and
-**Notifications** (Notification). Sound right?
-
-**Expert:** Yes. Presence might eventually split off but for now it lives in Messaging.
-
-```json
-// propose_bounded_context x2
-{ "session_id": "ses_4a1b2c3d",
-  "name": "Messaging",
-  "description": "Owns message lifecycle, channel membership, and user presence",
-  "aggregate_ids": ["agg_001", "agg_002", "agg_003"] } // → ctx_001
-
-{ "session_id": "ses_4a1b2c3d",
-  "name": "Notifications",
-  "description": "Owns fan-out of mention alerts to external push providers",
-  "aggregate_ids": ["agg_004"] } // → ctx_002
-```
+*(Facilitator captured policies: WhenRecurringEntryScheduled→ActualizeOnTargetDate, WhenMonthAdvances→RollProjection, WhenTransactionRecorded→RecalculateProjection, WhenCorrectionRecorded→RecalculateProjection, WhenExternalBalanceSynced→RecalculateProjection.)*
 
 ---
 
-## Summary
+## Phase 3 — Software Design (Aggregates, Bounded Contexts, Ubiquitous Language)
 
-**LLM:** We have a solid model. Here's what we captured:
+*(Facilitator clustered events and commands into aggregates: Ledger, Account, Transaction, RecurringEntry, Projection, Fantasy.)*
 
-| | |
-|---|---|
-| Domain events | 11 |
-| Commands | 8 |
-| Actors | 3 (1 person, 1 role, 1 external system) |
-| Policies | 1 |
-| Aggregates | 4 |
-| Bounded contexts | 2 |
-| Glossary terms | 3 |
-| Open hot spots | 1 |
+**Facilitator:** Three bounded contexts emerge: **Ledger Management** (Ledger, Account), **Bookkeeping** (Transaction, RecurringEntry), **Forecasting** (Projection, Fantasy). Does that feel right?
 
-**Open question (hs_001):** NotificationFailed — retry behaviour and per-device delivery
-visibility are unresolved. Flag for the next sprint planning session.
+**User:** That's great!
 
-**Key language decision:** DMs are private Channels with two members, not a separate
-concept. This collapses a potential split across two aggregates.
+*(Facilitator defined ubiquitous language: Projection not "budget", Correction not "reversal", Accountant not "user", Fantasy not "scenario", Ledger not "household/account group", RecurringEntry not "standing order/subscription", Actualize not "apply/realize", Variability not "category".)*
 
-Ready to emit Gherkin specs? Use `emit_gherkin` to generate `.feature` files per
-aggregate, tagged `@context:Messaging @aggregate:Message`, with scenarios derived from
-the command → event flows captured here.
+---
+
+## Emit
+
+*(Facilitator performed a linking pass to wire events to their trigger commands, then emitted to `specs/`.)*
+
+---
+
+## Output
+
+```
+specs/
+  glossary.md
+  context-map.json
+  bookkeeping/
+    transaction.feature        (5 scenarios)
+    recurring-entry.feature    (8 scenarios)
+  forecasting/
+    projection.feature         (4 scenarios)
+    fantasy.feature            (4 scenarios)
+  ledger-management/
+    ledger.feature             (4 scenarios)
+    account.feature            (6 scenarios)
+```
+
+31 scenarios total. The session produced a usable ubiquitous language glossary and a full set of Gherkin specs covering all aggregates across three bounded contexts.
