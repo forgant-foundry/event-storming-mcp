@@ -196,6 +196,58 @@ func AddActor(sessionID, name string, actorType ActorType, notes string) (*Sessi
 	return s, &s.Actors[len(s.Actors)-1], nil
 }
 
+// LinkEvent sets trigger_command_id on an existing event without creating a duplicate.
+func LinkEvent(sessionID, eventID, commandID string) (*Session, *Event, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range s.Events {
+		if s.Events[i].ID == eventID {
+			s.Events[i].TriggerCommandID = commandID
+			if err := Save(s); err != nil {
+				return nil, nil, err
+			}
+			return s, &s.Events[i], nil
+		}
+	}
+	return nil, nil, fmt.Errorf("event %s not found", eventID)
+}
+
+// RemoveEvent deletes an event by ID and removes it from any aggregate that references it.
+func RemoveEvent(sessionID, eventID string) (*Session, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	var events []Event
+	for _, e := range s.Events {
+		if e.ID == eventID {
+			found = true
+			continue
+		}
+		events = append(events, e)
+	}
+	if !found {
+		return nil, fmt.Errorf("event %s not found", eventID)
+	}
+	s.Events = events
+	for i := range s.Aggregates {
+		var eids []string
+		for _, eid := range s.Aggregates[i].EventIDs {
+			if eid != eventID {
+				eids = append(eids, eid)
+			}
+		}
+		s.Aggregates[i].EventIDs = eids
+	}
+	if err := Save(s); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
 func AddPolicy(sessionID, name, notes, triggerEventID, resultingCommandID, contextID string) (*Session, *Policy, error) {
 	s, err := Load(sessionID)
 	if err != nil {

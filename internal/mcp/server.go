@@ -21,6 +21,8 @@ func New() *server.MCPServer {
 	s.AddTool(addEventTool(), handleAddEvent)
 	s.AddTool(addCommandTool(), handleAddCommand)
 	s.AddTool(addActorTool(), handleAddActor)
+	s.AddTool(linkEventTool(), handleLinkEvent)
+	s.AddTool(removeEventTool(), handleRemoveEvent)
 	s.AddTool(addPolicyTool(), handleAddPolicy)
 	s.AddTool(addReadModelTool(), handleAddReadModel)
 	s.AddTool(addHotSpotTool(), handleAddHotSpot)
@@ -268,6 +270,59 @@ func handleDefineTerm(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	return resultJSON(gt)
+}
+
+func linkEventTool() libmcp.Tool {
+	return libmcp.NewTool("link_event",
+		libmcp.WithDescription("Set the trigger_command_id on an existing event, linking it to the command that caused it. Use this during the Phase 2 linking pass rather than re-adding the event (which would create a duplicate)."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("event_id", libmcp.Required(), libmcp.Description("ID of the event to update")),
+		libmcp.WithString("command_id", libmcp.Required(), libmcp.Description("ID of the command that triggers this event")),
+	)
+}
+
+func handleLinkEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	eventID, err := req.RequireString("event_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	commandID, err := req.RequireString("command_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	_, e, err := session.LinkEvent(sessionID, eventID, commandID)
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(e)
+}
+
+func removeEventTool() libmcp.Tool {
+	return libmcp.NewTool("remove_event",
+		libmcp.WithDescription("Delete an event from the session and remove it from any aggregate that references it. Use this to prune spurious events or clean up duplicates created by re-adding events instead of using link_event."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("event_id", libmcp.Required(), libmcp.Description("ID of the event to remove")),
+	)
+}
+
+func handleRemoveEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	eventID, err := req.RequireString("event_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	_, err = session.RemoveEvent(sessionID, eventID)
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(map[string]any{"removed": eventID})
 }
 
 func addPolicyTool() libmcp.Tool {

@@ -119,6 +119,32 @@ Flag anything that is:
 
 Call `add_hot_spot` and move on.
 
+### 2e — Link Events to Commands
+
+Now that all commands are captured, wire each event to the command that caused it.
+This is the step that makes Gherkin emission work — the emitter derives scenarios from
+command→event links.
+
+Call `resume_session` to get the full list of events and commands, then for each event
+ask: "Which command in this session triggered this?"
+
+For each clear pairing, call:
+
+```
+link_event(session_id, event_id, command_id)
+```
+
+Most pairings are obvious from the names (`AccountOpened` ← `OpenAccount`,
+`PaymentFailed` ← `ProcessPayment`). Work through the event list systematically.
+
+**Important:** use `link_event` — do not re-add the event with `add_event`. Re-adding
+creates a duplicate with a new ID while the original remains in any aggregate that
+already references it, producing broken output at emission time.
+
+Some events have no clear command trigger — they represent background facts, time-based
+triggers, or external system inputs. Leave those unlinked; note them as hot spots if
+they represent unresolved design questions.
+
 ---
 
 ## Phase 3 — Software Design

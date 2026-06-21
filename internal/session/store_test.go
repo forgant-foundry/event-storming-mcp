@@ -87,6 +87,63 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestLinkEvent(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	s, _ := session.New("Linking test", "")
+	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "")
+	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "", "", "", nil)
+
+	_, linked, err := session.LinkEvent(s.ID, evt.ID, cmd.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linked.TriggerCommandID != cmd.ID {
+		t.Errorf("TriggerCommandID: got %q, want %q", linked.TriggerCommandID, cmd.ID)
+	}
+	if linked.ID != evt.ID {
+		t.Error("link_event must not change the event ID")
+	}
+
+	loaded, _ := session.Load(s.ID)
+	if len(loaded.Events) != 1 {
+		t.Errorf("link_event must not create duplicates: got %d events", len(loaded.Events))
+	}
+
+	_, _, err = session.LinkEvent(s.ID, "evt_doesnotexist", cmd.ID)
+	if err == nil {
+		t.Error("expected error for unknown event ID")
+	}
+}
+
+func TestRemoveEvent(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	s, _ := session.New("Remove test", "")
+	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "")
+	_, evt2, _ := session.AddEvent(s.ID, "OrderCancelled", "", "", "")
+	session.ClusterAggregate(s.ID, "Order", "", "", []string{evt1.ID, evt2.ID}, nil)
+
+	_, err := session.RemoveEvent(s.ID, evt1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, _ := session.Load(s.ID)
+	if len(loaded.Events) != 1 || loaded.Events[0].ID != evt2.ID {
+		t.Errorf("wrong events after remove: %v", loaded.Events)
+	}
+	// Must also be removed from the aggregate
+	if len(loaded.Aggregates[0].EventIDs) != 1 || loaded.Aggregates[0].EventIDs[0] != evt2.ID {
+		t.Errorf("aggregate EventIDs not updated: %v", loaded.Aggregates[0].EventIDs)
+	}
+
+	_, err = session.RemoveEvent(s.ID, "evt_doesnotexist")
+	if err == nil {
+		t.Error("expected error for unknown event ID")
+	}
+}
+
 func TestSyncPath(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	syncFile := t.TempDir() + "/.event-storming/session.json"

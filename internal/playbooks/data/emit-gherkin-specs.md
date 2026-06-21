@@ -15,11 +15,16 @@ storming session. The output triple is:
 
 Before emitting, verify the session has:
 
-- [ ] Events linked to commands via `trigger_command_id` (set when calling `add_event`
-  or after the fact by re-adding the event with the ID)
+- [ ] Events linked to commands via `trigger_command_id` — use `link_event` to patch
+  existing events **without re-adding them**. Re-adding creates a duplicate with a new
+  ID while the original (already in an aggregate) remains unlinked. If you have
+  duplicates from a previous re-add attempt, use `remove_event` to clean them up.
 - [ ] Commands assigned to aggregates via `cluster_aggregate`
 - [ ] Aggregates assigned to bounded contexts via `propose_bounded_context`
 - [ ] Key terms defined via `define_term` with canonical phrasings
+
+Call `resume_session` to inspect the full event list and spot duplicate names before
+emitting.
 
 The emitter will produce output even if these are incomplete, but will include
 warnings for each gap. Resolve warnings before handing the feature files to a BDD
