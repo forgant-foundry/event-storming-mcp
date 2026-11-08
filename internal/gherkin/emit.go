@@ -191,7 +191,11 @@ func buildFeature(
 			for _, pre := range cmd.Preconditions {
 				b.WriteString(fmt.Sprintf("    Given %s\n", pre))
 			}
-			b.WriteString(fmt.Sprintf("    And %s\n", evt.Condition))
+			condKw := "And"
+			if len(cmd.Preconditions) == 0 {
+				condKw = "Given"
+			}
+			b.WriteString(fmt.Sprintf("    %s %s\n", condKw, evt.Condition))
 			b.WriteString(fmt.Sprintf("    When %s\n", WhenStep(cmd.Name, actor.Name)))
 			b.WriteString(fmt.Sprintf("    Then %s\n", ThenStep(evt.Name)))
 		}
@@ -283,19 +287,19 @@ func buildGlossary(s *session.Session, contextByID map[string]session.BoundedCon
 
 // contextMapJSON is the structure written to context-map.json.
 type contextMapJSON struct {
-	SessionID            string          `json:"session_id"`
-	SessionName          string          `json:"session_name"`
-	GeneratedAt          time.Time       `json:"generated_at"`
-	BoundedContexts      []ctxEntry      `json:"bounded_contexts"`
-	UncategorisedAggregates []aggEntry   `json:"uncategorised_aggregates,omitempty"`
+	SessionID               string     `json:"session_id"`
+	SessionName             string     `json:"session_name"`
+	GeneratedAt             time.Time  `json:"generated_at"`
+	BoundedContexts         []ctxEntry `json:"bounded_contexts"`
+	UncategorisedAggregates []aggEntry `json:"uncategorised_aggregates,omitempty"`
 }
 
 type ctxEntry struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description,omitempty"`
-	Aggregates  []aggEntry    `json:"aggregates"`
-	Glossary    []termEntry   `json:"glossary_terms,omitempty"`
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Aggregates  []aggEntry  `json:"aggregates"`
+	Glossary    []termEntry `json:"glossary_terms,omitempty"`
 }
 
 type aggEntry struct {

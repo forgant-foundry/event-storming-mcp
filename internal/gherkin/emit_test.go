@@ -226,8 +226,33 @@ func TestEmit_ConditionalEvent(t *testing.T) {
 	if sum.ScenarioCount != 2 {
 		t.Errorf("expected 2 scenarios (happy path + conditional), got %d", sum.ScenarioCount)
 	}
-	if !strings.Contains(content, "the payment method is invalid") {
-		t.Error("conditional event's condition should appear as a Given step")
+	if !strings.Contains(content, "    Given the payment method is invalid\n") {
+		t.Errorf("condition should open with Given when the command has no preconditions:\n%s", content)
+	}
+}
+
+func TestEmit_ConditionalEventWithPreconditions(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, actor, _ := session.AddActor(s.ID, "User", session.ActorTypePerson, "")
+	_, cmd, _ := session.AddCommand(s.ID, "ProcessPayment", "", actor.ID, "", []string{"an order is awaiting payment"})
+	_, evtOk, _ := session.AddEvent(s.ID, "PaymentProcessed", "", cmd.ID, "")
+	_, evtFail, _ := session.AddEvent(s.ID, "PaymentDeclined", "", cmd.ID, "")
+	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid")
+	session.ClusterAggregate(s.ID, "Payment", "", "", []string{evtOk.ID, evtFail.ID}, []string{cmd.ID})
+
+	loaded, _ := session.Load(s.ID)
+	sum, err := gherkin.Emit(loaded, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(sum.FeatureFiles[0])
+	content := string(data)
+
+	want := "    Given an order is awaiting payment\n    And the payment method is invalid\n"
+	if !strings.Contains(content, want) {
+		t.Errorf("condition should follow preconditions with And:\n%s", content)
 	}
 }
 

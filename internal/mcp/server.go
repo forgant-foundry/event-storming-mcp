@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -13,8 +14,17 @@ import (
 	"github.com/forgant-foundry/event-storming-mcp/internal/session"
 )
 
+// version reports the module version stamped by the Go toolchain: the release
+// tag for `go install ...@vX.Y.Z` or a tagged checkout, a pseudo-version otherwise.
+func version() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}
+
 func New() *server.MCPServer {
-	s := server.NewMCPServer("event-storming-mcp", "0.1.0")
+	s := server.NewMCPServer("event-storming-mcp", version())
 
 	s.AddTool(startSessionTool(), handleStartSession)
 	s.AddTool(resumeSessionTool(), handleResumeSession)

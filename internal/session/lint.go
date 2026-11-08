@@ -8,7 +8,7 @@ import (
 
 // LintIssue describes a single glossary conformance problem in a step string.
 type LintIssue struct {
-	Type       string `json:"type"`              // "alias" | "cross_context"
+	Type       string `json:"type"` // "alias" | "cross_context"
 	TermID     string `json:"term_id"`
 	Term       string `json:"term"`
 	Found      string `json:"found"`

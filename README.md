@@ -26,9 +26,11 @@ Each session produces three files:
 ```sh
 git clone https://github.com/forgant-foundry/event-storming-mcp
 cd event-storming-mcp
-make build
-# binary at ./bin/event-storming-mcp
+go install .
+# binary at $(go env GOPATH)/bin/event-storming-mcp — make sure that directory is on your PATH
 ```
+
+Or `make build` to produce `./bin/event-storming-mcp` without installing.
 
 ## Setup
 
@@ -47,31 +49,39 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. The 15 tools will appear automatically.
+Restart Claude Desktop. The 23 tools will appear automatically.
 
 ### Claude Code
 
-Add to `.claude/settings.json` in your project (project-scoped) or
-`~/.claude/settings.json` (global):
+Claude Code reads MCP servers from `.mcp.json` (project-scoped, commit it to share)
+or `~/.claude.json` (user-scoped). It does not read them from `.claude/settings.json`.
+
+To enable the server for one project, add it to that project's `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "event-storming-mcp": {
-      "command": "/path/to/event-storming-mcp",
+      "type": "stdio",
+      "command": "event-storming-mcp",
       "args": ["serve"]
     }
   }
 }
 ```
 
+Using the bare command name keeps the file portable; it requires the binary to be on
+the `PATH` of the shell that launches Claude Code.
+
 Or add it from the Claude Code CLI:
 
 ```sh
-claude mcp add event-storming-mcp /path/to/event-storming-mcp -- serve
+claude mcp add --scope project event-storming-mcp -- event-storming-mcp serve   # writes .mcp.json
+claude mcp add --scope user    event-storming-mcp -- event-storming-mcp serve   # all projects
 ```
 
-The tools will be available in any Claude Code session in that project.
+Claude Code asks you to approve project-scoped servers the first time it starts in
+that project. Run `/mcp` to confirm the server is connected.
 
 ## Quick Start
 
@@ -84,7 +94,7 @@ Claude will call `get_playbook("run-event-storming")` and follow the facilitatio
 script, calling tools as it goes. At the end, call `emit_gherkin` to write the
 output files.
 
-## Tools (15)
+## Tools (23)
 
 ### Session
 | Tool | Description |
@@ -101,6 +111,15 @@ output files.
 | `add_policy` | Record a reactive policy: "whenever X, then Y" |
 | `add_read_model` | Record a view an actor consults before acting |
 | `add_hot_spot` | Flag an unresolved question for follow-up |
+
+### Refinement
+| Tool | Description |
+|---|---|
+| `link_event` | Set the triggering command on an existing event (avoids duplicates) |
+| `remove_event` | Delete an event and detach it from its aggregate |
+| `set_event_condition` | Mark an event as conditional (e.g. a rejection); emitted as its own scenario |
+| `resolve_hotspot` | Close a hot spot with the decision that resolved it |
+| `deprecate_aggregate` | Mark an aggregate obsolete; its feature file is tagged `@deprecated` with no scenarios |
 
 ### Glossary
 | Tool | Description |

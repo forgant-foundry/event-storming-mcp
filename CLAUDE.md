@@ -16,9 +16,10 @@ internal/
     types.go    All domain types: Event, Command, Actor, Policy, ReadModel,
                 ExternalSystem, HotSpot, Aggregate, BoundedContext, GlossaryTerm, Session
     store.go    JSON-on-disk persistence ($XDG_DATA_HOME/event-storming-mcp/<id>/session.json)
-                Mutation functions: New, Load, Save, AddEvent, AddCommand, AddActor,
-                AddPolicy, AddReadModel, AddHotSpot, ClusterAggregate, ProposeContext,
-                DefineTerm
+                Mutation functions: New, Load, Save, SetSyncPath, ExportSession,
+                ImportSession, AddEvent, AddCommand, AddActor, SetEventCondition,
+                ResolveHotSpot, DeprecateAggregate, LinkEvent, RemoveEvent, AddPolicy,
+                AddReadModel, AddHotSpot, ClusterAggregate, ProposeContext, DefineTerm
     lint.go     LintStep — checks step text against glossary (alias violations,
                 cross-context leakage)
 
@@ -34,7 +35,8 @@ internal/
       emit-gherkin-specs.md
 
   mcp/
-    server.go   All 15 MCP tool definitions and handlers
+    server.go   All 23 MCP tool definitions and handlers; server version comes from
+                Go build info (VCS tag), "dev" when unavailable
 
 main.go
 ```
@@ -50,6 +52,9 @@ $XDG_DATA_HOME/event-storming-mcp/<session-id>/session.json
 `XDG_DATA_HOME` defaults to `~/.local/share` when not set.
 
 The file contains the entire session graph in a single document. There is no database.
+
+If `Session.SyncPath` is set (via `start_session(sync_path)` or `set_sync_path`), every
+`Save` also writes the same JSON to that project-local path.
 
 ## ID Scheme
 
@@ -68,30 +73,42 @@ All IDs are `prefix_<8 random hex bytes>`:
 | `ctx_` | BoundedContext |
 | `term_` | GlossaryTerm |
 
-## MCP Tools (15 total)
+## MCP Tools (23 total)
 
 ### Session management
-- `start_session(name, description)` → session_id
+- `start_session(name, description, sync_path?)` → session_id
 - `resume_session(session_id)` → full Session
 
 ### Sticky note capture
 - `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?)`
 - `add_command(session_id, name, notes?, actor_id?, aggregate_id?, preconditions?)`
 - `add_actor(session_id, name, type)` — type: person | role | external_system
-- `add_policy(session_id, name, trigger_event_id?, resulting_command_id?)`
-- `add_read_model(session_id, name, actor_id?)`
-- `add_hot_spot(session_id, question)`
+- `add_policy(session_id, name, trigger_event_id?, resulting_command_id?, context_id?, notes?)`
+- `add_read_model(session_id, name, actor_id?, context_id?, notes?)`
+- `add_hot_spot(session_id, question, context_id?)`
+
+### Refinement
+- `link_event(session_id, event_id, command_id)` — set trigger_command_id in place (no duplicate)
+- `remove_event(session_id, event_id)` — also detaches it from any aggregate
+- `set_event_condition(session_id, event_id, condition)` — conditional/rejection event
+- `resolve_hotspot(session_id, hotspot_id, resolution)`
+- `deprecate_aggregate(session_id, aggregate_id, reason?)`
 
 ### Glossary
 - `define_term(session_id, term, definition, canonical_phrasing?, aliases?, context_id?)`
 - `lint_steps(session_id, step_text, context_id?)` → { clean, issues }
 
 ### Clustering
-- `cluster_aggregate(session_id, name, event_ids?, command_ids?)` — enforces one-aggregate-per-event
+- `cluster_aggregate(session_id, name, event_ids?, command_ids?, context_id?)` — enforces one-aggregate-per-event
 - `propose_bounded_context(session_id, name, description?, aggregate_ids?, glossary_term_ids?)` — enforces one-context-per-aggregate
 
 ### Emission
 - `emit_gherkin(session_id, output_dir)` → Summary (feature files, glossary.md, context-map.json)
+
+### Portability
+- `export_session(session_id, path)` — write session JSON verbatim
+- `import_session(path)` → new session_id (original ID is replaced to avoid collisions)
+- `set_sync_path(session_id, path)` — empty path disables syncing
 
 ### Playbooks
 - `list_playbooks()` → [{ slug, title, description }]
@@ -116,7 +133,12 @@ Then   ThenStep(event.Name) for each event where event.TriggerCommandID == comma
 And    ... (additional events from the same command)
 ```
 
+Events with a `Condition` are excluded from the happy-path scenario and each gets its
+own scenario: preconditions as `Given`, the condition as `And` (or `Given` when there
+are no preconditions), then the command and that single event.
+
 Commands with no linked events produce a warning and are omitted.
+Deprecated aggregates are tagged `@deprecated` and emit no scenarios.
 Aggregates with no commands produce a stub scenario with `# TODO` comments.
 
 ## Adding a New Tool
