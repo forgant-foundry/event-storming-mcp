@@ -94,11 +94,11 @@ func set[T any](dst *T, v *T) {
 }
 
 type EventPatch struct {
-	Name, Notes *string
-	Source      *Source
+	Name, Notes, Phrasing *string
+	Source                *Source
 }
 
-// UpdateEvent edits an event's name, notes or source. Use LinkEvent and
+// UpdateEvent edits an event's name, notes, phrasing or source. Use LinkEvent and
 // SetEventCondition for its trigger and condition.
 func UpdateEvent(sessionID, eventID string, p EventPatch) (*Session, *Event, error) {
 	s, err := Load(sessionID)
@@ -120,6 +120,7 @@ func UpdateEvent(sessionID, eventID string, p EventPatch) (*Session, *Event, err
 	e := &s.Events[i]
 	set(&e.Name, p.Name)
 	set(&e.Notes, p.Notes)
+	set(&e.Phrasing, p.Phrasing)
 	set(&e.Source, p.Source)
 	if err := Save(s); err != nil {
 		return nil, nil, err
@@ -128,9 +129,9 @@ func UpdateEvent(sessionID, eventID string, p EventPatch) (*Session, *Event, err
 }
 
 type CommandPatch struct {
-	Name, Notes, ActorID *string
-	Preconditions        *[]string
-	Source               *Source
+	Name, Notes, ActorID, Phrasing *string
+	Preconditions                  *[]string
+	Source                         *Source
 }
 
 // UpdateCommand edits a command. Use AssignToAggregate to change its aggregate.
@@ -161,6 +162,7 @@ func UpdateCommand(sessionID, commandID string, p CommandPatch) (*Session, *Comm
 	set(&c.Notes, p.Notes)
 	set(&c.ActorID, p.ActorID)
 	set(&c.Preconditions, p.Preconditions)
+	set(&c.Phrasing, p.Phrasing)
 	set(&c.Source, p.Source)
 	if err := Save(s); err != nil {
 		return nil, nil, err
@@ -516,6 +518,10 @@ func RemoveItem(sessionID, kind, id string) (*Session, []string, error) {
 		for i := range s.Glossary {
 			t := &s.Glossary[i]
 			detach(&t.ContextID, KindTerm, t.Term, t.ID, "context_id")
+			if slices.Contains(t.SharedWith, id) {
+				t.SharedWith = slices.DeleteFunc(t.SharedWith, func(c string) bool { return c == id })
+				detached = append(detached, fmt.Sprintf("%s %q (%s): removed from shared_with", KindTerm, t.Term, t.ID))
+			}
 		}
 		for i := range s.Events {
 			e := &s.Events[i]

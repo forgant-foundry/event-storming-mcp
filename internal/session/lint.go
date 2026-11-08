@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -20,7 +21,8 @@ type LintIssue struct {
 //
 // It flags two things:
 //   - "alias": an alias appears in the step instead of the canonical phrasing
-//   - "cross_context": a term defined in a different bounded context appears in the step
+//   - "cross_context": a term defined in a different bounded context appears in the
+//     step, unless the term is shared with the step's context
 //
 // contextID is the bounded context the step belongs to; pass "" to skip cross-context checks.
 func LintStep(s *Session, contextID, stepText string) []LintIssue {
@@ -48,7 +50,8 @@ func LintStep(s *Session, contextID, stepText string) []LintIssue {
 			}
 		}
 
-		if contextID != "" && term.ContextID != "" && term.ContextID != contextID {
+		if contextID != "" && term.ContextID != "" && term.ContextID != contextID &&
+			!slices.Contains(term.SharedWith, contextID) {
 			termTokens := tokenize(term.Term)
 			if containsPhrase(tokens, termTokens) {
 				issues = append(issues, LintIssue{
@@ -56,7 +59,7 @@ func LintStep(s *Session, contextID, stepText string) []LintIssue {
 					TermID:  term.ID,
 					Term:    term.Term,
 					Found:   term.Term,
-					Message: fmt.Sprintf("term %q is defined in a different bounded context (%s)", term.Term, term.ContextID),
+					Message: fmt.Sprintf("term %q is defined in a different bounded context (%s); if the contexts share it on purpose, add this context to the term's shared_with", term.Term, term.ContextID),
 				})
 			}
 		}

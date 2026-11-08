@@ -29,6 +29,7 @@ type Event struct {
 	ContextID        string    `json:"context_id,omitempty"`
 	Notes            string    `json:"notes,omitempty"`
 	Condition        string    `json:"condition,omitempty"` // non-empty = conditionally emitted; emitted as a separate Scenario with this as an additional Given
+	Phrasing         string    `json:"phrasing,omitempty"`  // Then step text used verbatim instead of one derived from Name
 	Source           Source    `json:"source,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -40,6 +41,7 @@ type Command struct {
 	AggregateID   string    `json:"aggregate_id,omitempty"`
 	Preconditions []string  `json:"preconditions,omitempty"`
 	Notes         string    `json:"notes,omitempty"`
+	Phrasing      string    `json:"phrasing,omitempty"` // When step text (including the actor) used verbatim instead of one derived from Name
 	Source        Source    `json:"source,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
@@ -119,6 +121,7 @@ type GlossaryTerm struct {
 	CanonicalPhrasing string    `json:"canonical_phrasing,omitempty"`
 	Aliases           []string  `json:"aliases,omitempty"`
 	ContextID         string    `json:"context_id,omitempty"`
+	SharedWith        []string  `json:"shared_with,omitempty"` // other contexts that use this term on purpose (shared kernel / published language)
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }

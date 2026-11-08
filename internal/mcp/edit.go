@@ -22,6 +22,18 @@ func withSource() libmcp.ToolOption {
 	)
 }
 
+func withEventPhrasing() libmcp.ToolOption {
+	return libmcp.WithString("phrasing",
+		libmcp.Description("Then-step text used verbatim in emitted Gherkin, without the keyword (e.g. 'the scope is passed to the factory'). Set it when the name is long or doesn't read as '<noun> is <participle>'; empty string reverts to the derived text."),
+	)
+}
+
+func withCommandPhrasing() libmcp.ToolOption {
+	return libmcp.WithString("phrasing",
+		libmcp.Description("When-step text used verbatim in emitted Gherkin, including the actor, without the keyword (e.g. 'the product manager prioritizes the surfaces'). Also used as the scenario title. Set it when the name doesn't read as '<verb> a <object>'; empty string reverts to the derived text."),
+	)
+}
+
 // optString returns nil when key is absent, so the caller can tell "leave
 // unchanged" from "set to empty".
 func optString(req libmcp.CallToolRequest, key string) (*string, error) {
@@ -91,11 +103,12 @@ func requireIDs(req libmcp.CallToolRequest, keys ...string) ([]string, error) {
 
 func updateEventTool() libmcp.Tool {
 	return libmcp.NewTool("update_event",
-		libmcp.WithDescription("Edit an event's name, notes or source. Omitted fields are unchanged. Use link_event to change its command and set_event_condition to change its condition."),
+		libmcp.WithDescription("Edit an event's name, notes, phrasing or source. Omitted fields are unchanged. Use link_event to change its command and set_event_condition to change its condition."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("event_id", libmcp.Required(), libmcp.Description("ID of the event to edit")),
 		libmcp.WithString("name", libmcp.Description("New event name in past tense")),
 		libmcp.WithString("notes", libmcp.Description("New notes; empty string clears them")),
+		withEventPhrasing(),
 		withSource(),
 	)
 }
@@ -106,7 +119,7 @@ func handleUpdateEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	var p session.EventPatch
-	if err := optStringFields(req, map[string]**string{"name": &p.Name, "notes": &p.Notes}); err != nil {
+	if err := optStringFields(req, map[string]**string{"name": &p.Name, "notes": &p.Notes, "phrasing": &p.Phrasing}); err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	if p.Source, err = optSource(req); err != nil {
@@ -121,13 +134,14 @@ func handleUpdateEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 
 func updateCommandTool() libmcp.Tool {
 	return libmcp.NewTool("update_command",
-		libmcp.WithDescription("Edit a command's name, notes, actor, preconditions or source. Omitted fields are unchanged; preconditions, when given, replace the whole list. Use assign_to_aggregate to change its aggregate."),
+		libmcp.WithDescription("Edit a command's name, notes, actor, preconditions, phrasing or source. Omitted fields are unchanged; preconditions, when given, replace the whole list. Use assign_to_aggregate to change its aggregate."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("command_id", libmcp.Required(), libmcp.Description("ID of the command to edit")),
 		libmcp.WithString("name", libmcp.Description("New command name in imperative form")),
 		libmcp.WithString("notes", libmcp.Description("New notes; empty string clears them")),
 		libmcp.WithString("actor_id", libmcp.Description("ID of the actor issuing the command; empty string clears it")),
 		libmcp.WithArray("preconditions", libmcp.WithStringItems(), libmcp.Description("Replacement list of preconditions; empty array clears them")),
+		withCommandPhrasing(),
 		withSource(),
 	)
 }
@@ -138,7 +152,7 @@ func handleUpdateCommand(_ context.Context, req libmcp.CallToolRequest) (*libmcp
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	var p session.CommandPatch
-	if err := optStringFields(req, map[string]**string{"name": &p.Name, "notes": &p.Notes, "actor_id": &p.ActorID}); err != nil {
+	if err := optStringFields(req, map[string]**string{"name": &p.Name, "notes": &p.Notes, "actor_id": &p.ActorID, "phrasing": &p.Phrasing}); err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	if p.Preconditions, err = optStrings(req, "preconditions"); err != nil {

@@ -147,26 +147,21 @@ func ImportSession(srcPath string, syncPath *string) (*Session, string, error) {
 	return &s, originalID, nil
 }
 
-func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string, source Source) (*Session, *Event, error) {
+// AddEvent records e as a new event. ID and CreatedAt are assigned; the
+// other fields are taken from e.
+func AddEvent(sessionID string, e Event) (*Session, *Event, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkSource(source); err != nil {
+	if err := checkSource(e.Source); err != nil {
 		return nil, nil, err
 	}
-	if err := s.checkRefs(KindCommand, triggerCommandID, KindAggregate, aggregateID); err != nil {
+	if err := s.checkRefs(KindCommand, e.TriggerCommandID, KindAggregate, e.AggregateID, KindContext, e.ContextID); err != nil {
 		return nil, nil, err
 	}
-	e := Event{
-		ID:               newID("evt"),
-		Name:             name,
-		Notes:            notes,
-		TriggerCommandID: triggerCommandID,
-		AggregateID:      aggregateID,
-		Source:           source,
-		CreatedAt:        time.Now(),
-	}
+	e.ID = newID("evt")
+	e.CreatedAt = time.Now()
 	s.Events = append(s.Events, e)
 	if err := Save(s); err != nil {
 		return nil, nil, err
@@ -174,27 +169,21 @@ func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string, sour
 	return s, &s.Events[len(s.Events)-1], nil
 }
 
-func AddCommand(sessionID, name, notes, actorID, aggregateID string, preconditions []string, source Source) (*Session, *Command, error) {
+// AddCommand records c as a new command. ID and CreatedAt are assigned; the
+// other fields are taken from c.
+func AddCommand(sessionID string, c Command) (*Session, *Command, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkSource(source); err != nil {
+	if err := checkSource(c.Source); err != nil {
 		return nil, nil, err
 	}
-	if err := s.checkRefs(KindActor, actorID, KindAggregate, aggregateID); err != nil {
+	if err := s.checkRefs(KindActor, c.ActorID, KindAggregate, c.AggregateID); err != nil {
 		return nil, nil, err
 	}
-	c := Command{
-		ID:            newID("cmd"),
-		Name:          name,
-		Notes:         notes,
-		ActorID:       actorID,
-		AggregateID:   aggregateID,
-		Preconditions: preconditions,
-		Source:        source,
-		CreatedAt:     time.Now(),
-	}
+	c.ID = newID("cmd")
+	c.CreatedAt = time.Now()
 	s.Commands = append(s.Commands, c)
 	if err := Save(s); err != nil {
 		return nil, nil, err
@@ -520,7 +509,9 @@ func ProposeContext(sessionID, name, description string, aggregateIDs, glossaryT
 }
 
 // DefineTerm adds a glossary term or updates it in place if the term already exists.
-func DefineTerm(sessionID, term, definition, canonicalPhrasing, contextID string, aliases []string) (*Session, *GlossaryTerm, error) {
+// sharedWith names other contexts that use the term on purpose, so lint_steps
+// doesn't report it as cross-context leakage there.
+func DefineTerm(sessionID, term, definition, canonicalPhrasing, contextID string, aliases, sharedWith []string) (*Session, *GlossaryTerm, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
@@ -528,12 +519,18 @@ func DefineTerm(sessionID, term, definition, canonicalPhrasing, contextID string
 	if err := s.checkRefs(KindContext, contextID); err != nil {
 		return nil, nil, err
 	}
+	for _, id := range sharedWith {
+		if err := s.checkRefs(KindContext, id); err != nil {
+			return nil, nil, err
+		}
+	}
 	for i := range s.Glossary {
 		if s.Glossary[i].Term == term {
 			s.Glossary[i].Definition = definition
 			s.Glossary[i].CanonicalPhrasing = canonicalPhrasing
 			s.Glossary[i].Aliases = aliases
 			s.Glossary[i].ContextID = contextID
+			s.Glossary[i].SharedWith = sharedWith
 			s.Glossary[i].UpdatedAt = time.Now()
 			if err := Save(s); err != nil {
 				return nil, nil, err
@@ -548,6 +545,7 @@ func DefineTerm(sessionID, term, definition, canonicalPhrasing, contextID string
 		CanonicalPhrasing: canonicalPhrasing,
 		ContextID:         contextID,
 		Aliases:           aliases,
+		SharedWith:        sharedWith,
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
 	}

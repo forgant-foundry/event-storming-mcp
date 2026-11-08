@@ -26,7 +26,7 @@ func call(t *testing.T, h func(context.Context, libmcp.CallToolRequest) (*libmcp
 func TestUpdateCommand_OmittedVersusEmpty(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Ordering", "")
-	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "keep me", "", "", []string{"a cart exists"}, "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "PlaceOrder", Notes: "keep me", Preconditions: []string{"a cart exists"}})
 
 	res := call(t, handleUpdateCommand, map[string]any{
 		"session_id":    s.ID,
@@ -58,8 +58,8 @@ func TestUpdateCommand_OmittedVersusEmpty(t *testing.T) {
 func TestRemoveItem_ReportsDetachments(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Ordering", "")
-	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "", "", "", nil, "")
-	session.AddEvent(s.ID, "OrderPlaced", "", cmd.ID, "", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "PlaceOrder"})
+	session.AddEvent(s.ID, session.Event{Name: "OrderPlaced", TriggerCommandID: cmd.ID})
 
 	res := call(t, handleRemoveItem, map[string]any{"session_id": s.ID, "kind": "command", "id": cmd.ID})
 	if res.IsError {

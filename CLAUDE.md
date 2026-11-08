@@ -28,7 +28,8 @@ internal/
 
   gherkin/
     style.go    Text helpers: CamelCase → words, WhenStep, ThenStep, ScenarioTitle, Slug
-    emit.go     Emit — writes .feature files + glossary.md + context-map.json
+    emit.go     Emit(session, dir, Options{Only}) — writes aggregate .feature files,
+                policies.feature per context, glossary.md, context-map.json
 
   playbooks/
     playbooks.go  Embedded markdown registry; All() and Get(slug)
@@ -86,8 +87,11 @@ All IDs are `prefix_<8 random hex bytes>`:
 - `resume_session(session_id)` → full Session
 
 ### Sticky note capture
-- `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?, source?)`
-- `add_command(session_id, name, notes?, actor_id?, aggregate_id?, preconditions?, source?)`
+- `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?, phrasing?, source?)`
+- `add_command(session_id, name, notes?, actor_id?, aggregate_id?, preconditions?, phrasing?, source?)`
+
+`phrasing` overrides the derived step text verbatim (for a command it's the whole
+When step including the actor, and the scenario title).
 - `add_actor(session_id, name, type)` — type: person | role | external_system
 - `add_policy(session_id, name, trigger_event_id?, resulting_command_id?, context_id?, condition?, notes?, source?)`
 - `add_read_model(session_id, name, actor_ids?, context_id?, notes?, source?)` — `actor_id` still accepted
@@ -106,8 +110,8 @@ their scenarios tagged `@proposed`.
 ### Editing
 Update tools change only the fields passed; an empty string clears a field, and an
 array replaces the whole list.
-- `update_event(session_id, event_id, name?, notes?, source?)`
-- `update_command(session_id, command_id, name?, notes?, actor_id?, preconditions?, source?)`
+- `update_event(session_id, event_id, name?, notes?, phrasing?, source?)`
+- `update_command(session_id, command_id, name?, notes?, actor_id?, preconditions?, phrasing?, source?)`
 - `update_actor(session_id, actor_id, name?, type?, notes?)`
 - `update_policy(session_id, policy_id, name?, trigger_event_id?, resulting_command_id?, context_id?, condition?, notes?, source?)`
 - `update_read_model(session_id, read_model_id, name?, actor_ids?, context_id?, notes?, source?)`
@@ -119,7 +123,8 @@ array replaces the whole list.
   every reference to the removed record and reports each one
 
 ### Glossary
-- `define_term(session_id, term, definition, canonical_phrasing?, aliases?, context_id?)`
+- `define_term(session_id, term, definition, canonical_phrasing?, aliases?, context_id?, shared_with?)`
+  — `shared_with` lists contexts that use the term on purpose; lint_steps won't flag it there
 - `lint_steps(session_id, step_text, context_id?)` → { clean, issues }
 
 ### Clustering
@@ -127,7 +132,9 @@ array replaces the whole list.
 - `propose_bounded_context(session_id, name, description?, aggregate_ids?, glossary_term_ids?)` — enforces one-context-per-aggregate
 
 ### Emission
-- `emit_gherkin(session_id, output_dir)` → Summary (feature files, glossary.md, context-map.json)
+- `emit_gherkin(session_id, output_dir, only?)` → Summary (feature files, glossary.md,
+  context-map.json, scenario_count, open_hot_spots, warnings); `only` is any of
+  features | glossary | context_map
 
 ### Portability
 - `export_session(session_id, path)` — write session JSON verbatim
@@ -162,10 +169,27 @@ array replaces the whole list.
 
 ```
 Given  command.Preconditions (each precondition becomes a Given step)
-When   WhenStep(command.Name, actor.Name)
-Then   ThenStep(event.Name) for each event where event.TriggerCommandID == command.ID
+When   command.Phrasing, else WhenStep(command.Name, actor.Name)
+Then   event.Phrasing, else ThenStep(event.Name), for each event where
+       event.TriggerCommandID == command.ID
 And    ... (additional events from the same command)
 ```
+
+`ThenStep` splits at the last word when it's a participle, otherwise at the first
+participle ("ScopePassedToFactory" → "a scope is passed to factory"); a name opening
+with an -ed word is used bare. Plurals (trailing s, not -ss/-us/-is) drop the article
+and take "are". Anything the heuristics get wrong should set `phrasing`.
+
+Policies emit one scenario each into `<context>/policies.feature`, tagged
+`@policy:<slug>`: `Given condition` (if any), `When` the trigger event's Then text,
+`Then` the resulting command's When text. A policy's context is its own, else the
+resulting command's aggregate's, else the trigger event's aggregate's. A policy
+missing either end warns.
+
+Open hot spots are written as `# Open question (id): …` comments at the top of every
+feature file in their context. context-map.json also lists actors, and per context
+the policies, read models (with readers) and hot spots (open and resolved).
+Scenarios from facilitator-sourced commands, events or policies are tagged `@proposed`.
 
 Events with a `Condition` are excluded from the happy-path scenario and each gets its
 own scenario: preconditions as `Given`, the condition as `And` (or `Given` when there

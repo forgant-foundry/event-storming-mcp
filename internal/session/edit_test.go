@@ -17,7 +17,7 @@ func TestUpdateCommand(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Ordering", "")
 	_, actor, _ := session.AddActor(s.ID, "Customer", session.ActorTypePerson, "")
-	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "first draft", actor.ID, "", []string{"a cart exists"}, session.SourceFacilitator)
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "PlaceOrder", Notes: "first draft", ActorID: actor.ID, Preconditions: []string{"a cart exists"}, Source: session.SourceFacilitator})
 
 	_, got, err := session.UpdateCommand(s.ID, cmd.ID, session.CommandPatch{
 		Notes:         ptr(""),
@@ -63,8 +63,8 @@ func TestUpdateAggregateNotes(t *testing.T) {
 func TestUpdatePolicyCondition(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Factory", "")
-	_, evt, _ := session.AddEvent(s.ID, "CompletenessAssessed", "", "", "", "")
-	_, cmd, _ := session.AddCommand(s.ID, "DeclareArrival", "", "", "", nil, "")
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "CompletenessAssessed"})
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "DeclareArrival"})
 	_, pol, err := session.AddPolicy(s.ID, "Declare arrival", "", evt.ID, cmd.ID, "", "the assessment found no gaps", session.SourceExpert)
 	if err != nil {
 		t.Fatal(err)
@@ -125,9 +125,9 @@ func TestReadModelActors(t *testing.T) {
 func TestAssignToAggregate(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Factory", "")
-	_, c1, _ := session.AddCommand(s.ID, "SetBugBar", "", "", "", nil, "")
-	_, c2, _ := session.AddCommand(s.ID, "SetScaleEnvelope", "", "", "", nil, "")
-	_, e2, _ := session.AddEvent(s.ID, "ScaleEnvelopeSet", "", c2.ID, "", "")
+	_, c1, _ := session.AddCommand(s.ID, session.Command{Name: "SetBugBar"})
+	_, c2, _ := session.AddCommand(s.ID, session.Command{Name: "SetScaleEnvelope"})
+	_, e2, _ := session.AddEvent(s.ID, session.Event{Name: "ScaleEnvelopeSet", TriggerCommandID: c2.ID})
 	_, handoff, _ := session.ClusterAggregate(s.ID, "Handoff", "", "", nil, []string{c1.ID})
 	_, other, _ := session.ClusterAggregate(s.ID, "Other", "", "", nil, nil)
 
@@ -167,7 +167,7 @@ func TestAssignToContext(t *testing.T) {
 	s, _ := session.New("Factory", "")
 	_, a1, _ := session.ClusterAggregate(s.ID, "Handoff", "", "", nil, nil)
 	_, a2, _ := session.ClusterAggregate(s.ID, "ThreatDecision", "", "", nil, nil)
-	_, term, _ := session.DefineTerm(s.ID, "Bug Bar", "The severity threshold.", "", "", nil)
+	_, term, _ := session.DefineTerm(s.ID, "Bug Bar", "The severity threshold.", "", "", nil, nil)
 	_, ctx, _ := session.ProposeContext(s.ID, "Scoping", "", []string{a1.ID}, nil)
 
 	_, got, err := session.AssignToContext(s.ID, ctx.ID, []string{a2.ID}, []string{term.ID}, false)
@@ -183,8 +183,8 @@ func TestRemoveItemCascades(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Ordering", "")
 	_, actor, _ := session.AddActor(s.ID, "Customer", session.ActorTypePerson, "")
-	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "", actor.ID, "", nil, "")
-	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", cmd.ID, "", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "PlaceOrder", ActorID: actor.ID})
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "OrderPlaced", TriggerCommandID: cmd.ID})
 	_, pol, _ := session.AddPolicy(s.ID, "Reorder", "", evt.ID, cmd.ID, "", "", "")
 	_, rm, _ := session.AddReadModel(s.ID, "Order History", "", []string{actor.ID}, "", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", []string{evt.ID}, []string{cmd.ID})

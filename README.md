@@ -9,13 +9,17 @@ The LLM drives the conversation. The server owns the grammar and durable state.
 
 ## Output
 
-Each session produces three files:
+Each session produces:
 
 | File | Contents |
 |---|---|
-| `{context}/{aggregate}.feature` | Gherkin scenarios runnable by Cucumber / Behave / godog |
+| `{context}/{aggregate}.feature` | Gherkin scenarios runnable by Cucumber / Behave / godog; open hot spots appear as comments |
+| `{context}/policies.feature` | One scenario per policy: when the trigger event happens, then the command is issued |
 | `glossary.md` | Ubiquitous language reference |
-| `context-map.json` | Machine-readable bounded context structure |
+| `context-map.json` | Machine-readable structure: bounded contexts, aggregates, policies, read models, actors, hot spots |
+
+`emit_gherkin` takes an optional `only` (`features`, `glossary`, `context_map`), so you
+can refresh the glossary and context map without overwriting hand-edited feature files.
 
 ## Prerequisites
 
@@ -129,6 +133,7 @@ output files.
 | `assign_to_context` | Add aggregates and glossary terms to an existing bounded context |
 | `remove_item` | Delete any record; every reference to it is cleared and reported |
 
+Events and commands take an optional `phrasing` used verbatim in the emitted steps.
 Capture and update tools take an optional `source` — `expert`, `facilitator` or
 `imported` — and scenarios built from facilitator-sourced notes are tagged `@proposed`.
 Policies take an optional `condition`; read models take several readers in `actor_ids`.
@@ -136,7 +141,7 @@ Policies take an optional `condition`; read models take several readers in `acto
 ### Glossary
 | Tool | Description |
 |---|---|
-| `define_term` | Add or update a glossary entry (upsert by term name) |
+| `define_term` | Add or update a glossary entry (upsert by term name); `shared_with` marks contexts that use it on purpose |
 | `lint_steps` | Check step text for alias violations and cross-context leakage |
 
 ### Clustering
@@ -148,7 +153,7 @@ Policies take an optional `condition`; read models take several readers in `acto
 ### Emission
 | Tool | Description |
 |---|---|
-| `emit_gherkin` | Write .feature files, glossary.md, and context-map.json |
+| `emit_gherkin` | Write .feature files, glossary.md, and context-map.json; `only` limits which |
 
 ### Portability
 | Tool | Description |

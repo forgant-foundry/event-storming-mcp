@@ -28,13 +28,14 @@ func camelWords(s string) []string {
 	return words
 }
 
-// Slug converts a name to a lowercase hyphenated filename slug.
-// Handles both PascalCase ("BoundedContext" → "bounded-context") and
-// space-separated names ("Ledger Management" → "ledger-management").
+// Slug converts a name to a lowercase hyphenated slug for file names and tags.
+// Handles PascalCase ("BoundedContext" → "bounded-context"), space-separated
+// names ("Ledger Management" → "ledger-management"), and drops punctuation
+// ("Whenever X, then Y" → "whenever-x-then-y").
 func Slug(s string) string {
-	// Normalise spaces/underscores to hyphens first, then split CamelCase words.
+	// Split on anything that isn't a letter or digit, then split CamelCase words.
 	words := strings.FieldsFunc(s, func(r rune) bool {
-		return r == ' ' || r == '_' || r == '-'
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
 	var parts []string
 	for _, w := range words {
@@ -73,9 +74,64 @@ func ThenStep(eventName string) string {
 	if len(words) == 1 {
 		return "the " + words[0] + " event occurs"
 	}
-	// Last word is typically a past participle; everything before it is the noun.
-	noun := nounPhrase(words[:len(words)-1])
-	return noun + " is " + words[len(words)-1]
+	// The participle is usually the last word ("OrderPlaced"). When the name
+	// ends in a prepositional phrase instead ("ScopePassedToFactory"), split at
+	// the first -ed word: "a scope is passed to factory".
+	// A name that starts with its participle ("MergedToMain") has no subject
+	// to put before "is", so it's used as is: "merged to main".
+	if isRegularParticiple(words[0]) {
+		return strings.Join(words, " ")
+	}
+	split := len(words) - 1
+	if !isParticiple(words[split]) {
+		for i := 1; i < len(words)-1; i++ {
+			if isParticiple(words[i]) {
+				split = i
+				break
+			}
+		}
+	}
+	nounWords := words[:split]
+	verb := " is "
+	if isPlural(nounWords[len(nounWords)-1]) {
+		verb = " are "
+	}
+	return nounPhrase(nounWords) + verb + strings.Join(words[split:], " ")
+}
+
+// prepositions that can open a command's object ("MergeToMain" → "merges to
+// main"), which then takes no article.
+var prepositions = map[string]bool{
+	"to": true, "from": true, "into": true, "onto": true, "on": true, "in": true,
+	"at": true, "by": true, "for": true, "with": true, "without": true,
+}
+
+// irregularParticiples are common past participles that don't end in -ed.
+var irregularParticiples = map[string]bool{
+	"begun": true, "broken": true, "brought": true, "built": true, "bought": true,
+	"caught": true, "chosen": true, "done": true, "drawn": true, "driven": true,
+	"found": true, "forgotten": true, "frozen": true, "given": true, "grown": true,
+	"held": true, "hidden": true, "kept": true, "known": true, "left": true,
+	"lost": true, "made": true, "met": true, "paid": true, "put": true, "run": true,
+	"seen": true, "sent": true, "set": true, "shown": true, "sold": true,
+	"spent": true, "taken": true, "told": true, "thrown": true, "won": true,
+	"written": true,
+}
+
+func isRegularParticiple(w string) bool {
+	return len(w) > 3 && strings.HasSuffix(w, "ed") && !strings.HasSuffix(w, "eed")
+}
+
+func isParticiple(w string) bool {
+	return isRegularParticiple(w) || irregularParticiples[w]
+}
+
+// isPlural is a deliberately narrow guess: a trailing s that isn't part of
+// -ss, -us or -is ("process", "status", "analysis"). Names it gets wrong
+// should set an explicit phrasing.
+func isPlural(w string) bool {
+	return len(w) > 2 && strings.HasSuffix(w, "s") &&
+		!strings.HasSuffix(w, "ss") && !strings.HasSuffix(w, "us") && !strings.HasSuffix(w, "is")
 }
 
 // ScenarioTitle produces a human-readable scenario title from a command name and actor.
@@ -100,6 +156,9 @@ func nounPhrase(words []string) string {
 		return ""
 	}
 	noun := strings.Join(words, " ")
+	if isPlural(words[len(words)-1]) || prepositions[words[0]] {
+		return noun
+	}
 	if isVowelStart(noun) {
 		return "an " + noun
 	}

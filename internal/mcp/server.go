@@ -147,6 +147,7 @@ func addEventTool() libmcp.Tool {
 		libmcp.WithString("notes", libmcp.Description("Optional clarifying notes")),
 		libmcp.WithString("trigger_command_id", libmcp.Description("ID of the command that triggered this event")),
 		libmcp.WithString("aggregate_id", libmcp.Description("ID of the aggregate this event belongs to")),
+		withEventPhrasing(),
 		withSource(),
 	)
 }
@@ -160,13 +161,14 @@ func handleAddEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	_, e, err := session.AddEvent(
-		sessionID, name,
-		req.GetString("notes", ""),
-		req.GetString("trigger_command_id", ""),
-		req.GetString("aggregate_id", ""),
-		session.Source(req.GetString("source", "")),
-	)
+	_, e, err := session.AddEvent(sessionID, session.Event{
+		Name:             name,
+		Notes:            req.GetString("notes", ""),
+		TriggerCommandID: req.GetString("trigger_command_id", ""),
+		AggregateID:      req.GetString("aggregate_id", ""),
+		Phrasing:         req.GetString("phrasing", ""),
+		Source:           session.Source(req.GetString("source", "")),
+	})
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
@@ -187,6 +189,7 @@ func addCommandTool() libmcp.Tool {
 		libmcp.WithArray("preconditions",
 			libmcp.Description("Precondition strings that must hold before the command can be issued"),
 		),
+		withCommandPhrasing(),
 		withSource(),
 	)
 }
@@ -200,14 +203,15 @@ func handleAddCommand(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	_, c, err := session.AddCommand(
-		sessionID, name,
-		req.GetString("notes", ""),
-		req.GetString("actor_id", ""),
-		req.GetString("aggregate_id", ""),
-		req.GetStringSlice("preconditions", nil),
-		session.Source(req.GetString("source", "")),
-	)
+	_, c, err := session.AddCommand(sessionID, session.Command{
+		Name:          name,
+		Notes:         req.GetString("notes", ""),
+		ActorID:       req.GetString("actor_id", ""),
+		AggregateID:   req.GetString("aggregate_id", ""),
+		Preconditions: req.GetStringSlice("preconditions", nil),
+		Phrasing:      req.GetString("phrasing", ""),
+		Source:        session.Source(req.GetString("source", "")),
+	})
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
@@ -269,6 +273,9 @@ func defineTermTool() libmcp.Tool {
 			libmcp.Description("Synonyms or alternative names to lint against (e.g. ['cart', 'basket'])"),
 		),
 		libmcp.WithString("context_id", libmcp.Description("ID of the bounded context this term belongs to")),
+		libmcp.WithArray("shared_with", libmcp.WithStringItems(),
+			libmcp.Description("IDs of other bounded contexts that use this term on purpose (shared kernel or published language); lint_steps won't flag it as leakage there"),
+		),
 	)
 }
 
@@ -290,6 +297,7 @@ func handleDefineTerm(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 		req.GetString("canonical_phrasing", ""),
 		req.GetString("context_id", ""),
 		req.GetStringSlice("aliases", nil),
+		req.GetStringSlice("shared_with", nil),
 	)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
@@ -632,11 +640,14 @@ func handleProposeContext(_ context.Context, req libmcp.CallToolRequest) (*libmc
 
 func emitGherkinTool() libmcp.Tool {
 	return libmcp.NewTool("emit_gherkin",
-		libmcp.WithDescription("Generate the output triple for this session: .feature files (one per aggregate), glossary.md, and context-map.json. Returns a summary of what was written and any warnings."),
+		libmcp.WithDescription("Generate the outputs for this session: .feature files (one per aggregate, plus policies.feature per bounded context, with open hot spots as comments), glossary.md, and context-map.json (also lists actors, policies, read models and hot spots). Returns a summary of what was written, the open hot spot count, and any warnings."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("output_dir",
 			libmcp.Required(),
 			libmcp.Description("Filesystem path to write output files into (will be created if absent)"),
+		),
+		libmcp.WithArray("only", libmcp.WithStringItems(libmcp.Enum(gherkin.Outputs...)),
+			libmcp.Description("Write only these outputs: features, glossary, context_map. Default is all. Use ['glossary', 'context_map'] to refresh them without overwriting hand-edited .feature files."),
 		),
 	)
 }
@@ -654,7 +665,7 @@ func handleEmitGherkin(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	sum, err := gherkin.Emit(s, outDir)
+	sum, err := gherkin.Emit(s, outDir, gherkin.Options{Only: req.GetStringSlice("only", nil)})
 	if err != nil {
 		return libmcp.NewToolResultError(fmt.Sprintf("emit failed: %v", err)), nil
 	}
