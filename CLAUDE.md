@@ -119,6 +119,13 @@ All IDs are `prefix_<8 random hex bytes>`:
 - An event may belong to at most one aggregate (enforced in `ClusterAggregate`)
 - A command may belong to at most one aggregate (enforced in `ClusterAggregate`)
 - An aggregate may belong to at most one bounded context (enforced in `ProposeContext`)
+- `add_event` / `add_command` reject an unknown `aggregate_id` and write both sides
+  of the membership
+- Membership is stored on both sides (`Aggregate.EventIDs`/`CommandIDs` vs. the
+  member's `AggregateID`; `BoundedContext.AggregateIDs`/`GlossaryTermIDs` vs. the
+  member's `ContextID`). `Load` and `ImportSession` run `reconcile`, which repairs
+  drift: a valid member-side owner wins, list-only entries are claimed, dangling
+  owner IDs are cleared
 - "Already assigned to a different X" errors are returned as tool-level errors (not
   Go errors), so the LLM sees them as structured messages it can relay to the user
 
@@ -138,6 +145,10 @@ own scenario: preconditions as `Given`, the condition as `And` (or `Given` when 
 are no preconditions), then the command and that single event.
 
 Commands with no linked events produce a warning and are omitted.
+A command with exactly one conditional event and no unconditional one warns (likely a
+gap); two or more conditional events with none unconditional is a branch and doesn't.
+Tags are `@context:<slug>` and `@aggregate:<slug>` — Gherkin tags can't contain
+whitespace. `emit_test.go` runs every emitted file through the cucumber Gherkin parser.
 Deprecated aggregates are tagged `@deprecated` and emit no scenarios.
 Aggregates with no commands produce a stub scenario with `# TODO` comments.
 

@@ -1,14 +1,36 @@
 package gherkin_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	cucumber "github.com/cucumber/gherkin/go/v42"
+
 	"github.com/forgant-foundry/event-storming-mcp/internal/gherkin"
 	"github.com/forgant-foundry/event-storming-mcp/internal/session"
 )
+
+// parseFeatures runs every emitted feature file through the reference Gherkin
+// parser, so the emitter can't produce files a BDD runner would reject.
+func parseFeatures(t *testing.T, sum *gherkin.Summary) {
+	t.Helper()
+	for _, path := range sum.FeatureFiles {
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		_, err = cucumber.ParseGherkinDocument(f, func() string { n++; return fmt.Sprint(n) })
+		f.Close()
+		if err != nil {
+			data, _ := os.ReadFile(path)
+			t.Errorf("%s does not parse as Gherkin: %v\n\n%s", path, err, data)
+		}
+	}
+}
 
 // buildChatSession builds a minimal but realistic session: one aggregate in one
 // bounded context, with an actor, a command, and a linked event.
@@ -82,8 +104,8 @@ func TestEmit_FeatureContent(t *testing.T) {
 	content := string(data)
 
 	checks := []string{
-		"@context:Messaging",
-		"@aggregate:Message",
+		"@context:messaging",
+		"@aggregate:message",
 		"Feature: Message",
 		"Scenario:",
 		"Given user is a member of the channel",
@@ -310,5 +332,85 @@ func TestEmit_FileLayout(t *testing.T) {
 		if rel != want {
 			t.Errorf("feature path: got %q, want %q", rel, want)
 		}
+	}
+}
+
+// TestEmit_ParsesAsGherkin covers every emitter path with names that contain
+// spaces, which Gherkin tags may not.
+func TestEmit_ParsesAsGherkin(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, actor, _ := session.AddActor(s.ID, "Cell Agent", session.ActorTypeRole, "")
+
+	// Happy path with two events, plus conditional events with and without preconditions.
+	_, rate, _ := session.AddCommand(s.ID, "RateThreat", "", actor.ID, "", []string{"a threat is identified"})
+	_, rated, _ := session.AddEvent(s.ID, "ThreatRated", "", rate.ID, "")
+	_, logged, _ := session.AddEvent(s.ID, "RatingLogged", "", rate.ID, "")
+	_, above, _ := session.AddEvent(s.ID, "ThreatEscalated", "", rate.ID, "")
+	session.SetEventCondition(s.ID, above.ID, "the threat is above the bug bar")
+	_, start, _ := session.AddCommand(s.ID, "StartReview", "", actor.ID, "", nil)
+	_, fresh, _ := session.AddEvent(s.ID, "FreshReviewStarted", "", start.ID, "")
+	_, cont, _ := session.AddEvent(s.ID, "ReviewResumed", "", start.ID, "")
+	session.SetEventCondition(s.ID, fresh.ID, "no review exists")
+	session.SetEventCondition(s.ID, cont.ID, "a review exists")
+	_, agg, _ := session.ClusterAggregate(s.ID, "Threat Register", "Rule: every threat is rated against the bug bar", "",
+		[]string{rated.ID, logged.ID, above.ID, fresh.ID, cont.ID}, []string{rate.ID, start.ID})
+
+	// Stub aggregate (events, no commands) and a deprecated aggregate.
+	_, e1, _ := session.AddEvent(s.ID, "BudgetSet", "", "", "")
+	_, e2, _ := session.AddEvent(s.ID, "BudgetRaised", "", "", "")
+	_, stub, _ := session.ClusterAggregate(s.ID, "Budget Envelope", "", "", []string{e1.ID, e2.ID}, nil)
+	_, e3, _ := session.AddEvent(s.ID, "LegacyThing", "", "", "")
+	_, dep, _ := session.ClusterAggregate(s.ID, "Old Ledger", "", "", []string{e3.ID}, nil)
+	session.DeprecateAggregate(s.ID, dep.ID, "superseded")
+
+	session.ProposeContext(s.ID, "Cell Judgment", "", []string{agg.ID, stub.ID, dep.ID}, nil)
+
+	loaded, _ := session.Load(s.ID)
+	sum, err := gherkin.Emit(loaded, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseFeatures(t, sum)
+
+	data, _ := os.ReadFile(filepath.Join(filepath.Dir(sum.FeatureFiles[0]), "threat-register.feature"))
+	content := string(data)
+	if !strings.HasPrefix(content, "@context:cell-judgment @aggregate:threat-register\n") {
+		t.Errorf("tags should be slugged:\n%s", content)
+	}
+	if strings.Contains(content, "And  ") {
+		t.Errorf("And should be followed by a single space:\n%s", content)
+	}
+}
+
+func TestEmit_ConditionalOnlyWarnings(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+
+	// Two conditional outcomes and no unconditional one: a branch, no warning.
+	_, branch, _ := session.AddCommand(s.ID, "StartEventStorming", "", "", "", nil)
+	_, empty, _ := session.AddEvent(s.ID, "GreenfieldStarted", "", branch.ID, "")
+	_, existing, _ := session.AddEvent(s.ID, "BrownfieldStarted", "", branch.ID, "")
+	session.SetEventCondition(s.ID, empty.ID, "the target repo has no code")
+	session.SetEventCondition(s.ID, existing.ID, "the target repo has existing code")
+
+	// One conditional outcome and no happy path: a gap, warned.
+	_, gap, _ := session.AddCommand(s.ID, "ApproveScope", "", "", "", nil)
+	_, rejected, _ := session.AddEvent(s.ID, "ScopeRejected", "", gap.ID, "")
+	session.SetEventCondition(s.ID, rejected.ID, "the scope is incomplete")
+
+	session.ClusterAggregate(s.ID, "Scope", "", "",
+		[]string{empty.ID, existing.ID, rejected.ID}, []string{branch.ID, gap.ID})
+
+	loaded, _ := session.Load(s.ID)
+	sum, err := gherkin.Emit(loaded, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ScenarioCount != 3 {
+		t.Errorf("expected 3 scenarios, got %d", sum.ScenarioCount)
+	}
+	if len(sum.Warnings) != 1 || !strings.Contains(sum.Warnings[0], "ApproveScope") {
+		t.Errorf("expected exactly one warning, for ApproveScope; got %v", sum.Warnings)
 	}
 }

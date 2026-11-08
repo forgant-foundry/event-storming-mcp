@@ -62,6 +62,7 @@ func Load(id string) (*Session, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("corrupt session %s: %w", id, err)
 	}
+	reconcile(&s)
 	return &s, nil
 }
 
@@ -128,6 +129,7 @@ func ImportSession(srcPath string) (*Session, string, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, "", fmt.Errorf("invalid session file: %w", err)
 	}
+	reconcile(&s)
 	originalID := s.ID
 	s.ID = newID("ses")
 	if err := Save(&s); err != nil {
@@ -141,6 +143,12 @@ func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string) (*Se
 	if err != nil {
 		return nil, nil, err
 	}
+	aggIdx := -1
+	if aggregateID != "" {
+		if aggIdx = aggregateIndex(s, aggregateID); aggIdx < 0 {
+			return nil, nil, fmt.Errorf("aggregate %s not found", aggregateID)
+		}
+	}
 	e := Event{
 		ID:               newID("evt"),
 		Name:             name,
@@ -150,6 +158,9 @@ func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string) (*Se
 		CreatedAt:        time.Now(),
 	}
 	s.Events = append(s.Events, e)
+	if aggIdx >= 0 {
+		s.Aggregates[aggIdx].EventIDs = append(s.Aggregates[aggIdx].EventIDs, e.ID)
+	}
 	if err := Save(s); err != nil {
 		return nil, nil, err
 	}
@@ -161,6 +172,12 @@ func AddCommand(sessionID, name, notes, actorID, aggregateID string, preconditio
 	if err != nil {
 		return nil, nil, err
 	}
+	aggIdx := -1
+	if aggregateID != "" {
+		if aggIdx = aggregateIndex(s, aggregateID); aggIdx < 0 {
+			return nil, nil, fmt.Errorf("aggregate %s not found", aggregateID)
+		}
+	}
 	c := Command{
 		ID:            newID("cmd"),
 		Name:          name,
@@ -171,6 +188,9 @@ func AddCommand(sessionID, name, notes, actorID, aggregateID string, preconditio
 		CreatedAt:     time.Now(),
 	}
 	s.Commands = append(s.Commands, c)
+	if aggIdx >= 0 {
+		s.Aggregates[aggIdx].CommandIDs = append(s.Aggregates[aggIdx].CommandIDs, c.ID)
+	}
 	if err := Save(s); err != nil {
 		return nil, nil, err
 	}
@@ -527,4 +547,112 @@ func DefineTerm(sessionID, term, definition, canonicalPhrasing, contextID string
 		return nil, nil, err
 	}
 	return s, &s.Glossary[len(s.Glossary)-1], nil
+}
+
+func aggregateIndex(s *Session, id string) int {
+	for i := range s.Aggregates {
+		if s.Aggregates[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// reconcile repairs membership that is stored on both sides: an aggregate's
+// event_ids/command_ids against each member's aggregate_id, and a context's
+// aggregate_ids/glossary_term_ids against each member's context_id. Sessions
+// written by older versions could let the two sides drift apart.
+func reconcile(s *Session) {
+	aggLists := make([]ownerList, len(s.Aggregates))
+	aggCmdLists := make([]ownerList, len(s.Aggregates))
+	for i := range s.Aggregates {
+		aggLists[i] = ownerList{s.Aggregates[i].ID, &s.Aggregates[i].EventIDs}
+		aggCmdLists[i] = ownerList{s.Aggregates[i].ID, &s.Aggregates[i].CommandIDs}
+	}
+	events := make([]member, len(s.Events))
+	for i := range s.Events {
+		events[i] = member{s.Events[i].ID, &s.Events[i].AggregateID}
+	}
+	commands := make([]member, len(s.Commands))
+	for i := range s.Commands {
+		commands[i] = member{s.Commands[i].ID, &s.Commands[i].AggregateID}
+	}
+	reconcileMembership(aggLists, events)
+	reconcileMembership(aggCmdLists, commands)
+
+	ctxAggLists := make([]ownerList, len(s.BoundedContexts))
+	ctxTermLists := make([]ownerList, len(s.BoundedContexts))
+	for i := range s.BoundedContexts {
+		ctxAggLists[i] = ownerList{s.BoundedContexts[i].ID, &s.BoundedContexts[i].AggregateIDs}
+		ctxTermLists[i] = ownerList{s.BoundedContexts[i].ID, &s.BoundedContexts[i].GlossaryTermIDs}
+	}
+	aggs := make([]member, len(s.Aggregates))
+	for i := range s.Aggregates {
+		aggs[i] = member{s.Aggregates[i].ID, &s.Aggregates[i].ContextID}
+	}
+	terms := make([]member, len(s.Glossary))
+	for i := range s.Glossary {
+		terms[i] = member{s.Glossary[i].ID, &s.Glossary[i].ContextID}
+	}
+	reconcileMembership(ctxAggLists, aggs)
+	reconcileMembership(ctxTermLists, terms)
+}
+
+// ownerList is an owner's list of member IDs.
+type ownerList struct {
+	id   string
+	list *[]string
+}
+
+// member is an item that points at its owner through a single ID field.
+type member struct {
+	id    string
+	owner *string
+}
+
+// reconcileMembership makes each owner's list and each member's owner field
+// agree. A member already pointing at an existing owner keeps it; a member
+// with no valid owner is claimed by the first owner (in session order) whose
+// list names it; owner
+// fields pointing at a missing owner are cleared. Lists are rebuilt in their
+// existing order, with newly found members appended in session order.
+func reconcileMembership(owners []ownerList, members []member) {
+	exists := make(map[string]bool, len(owners))
+	for _, o := range owners {
+		exists[o.id] = true
+	}
+	byID := make(map[string]member, len(members))
+	for _, m := range members {
+		byID[m.id] = m
+	}
+	for _, o := range owners {
+		for _, id := range *o.list {
+			if m, ok := byID[id]; ok && !exists[*m.owner] {
+				*m.owner = o.id
+			}
+		}
+	}
+	for _, m := range members {
+		if *m.owner != "" && !exists[*m.owner] {
+			*m.owner = ""
+		}
+	}
+	for _, o := range owners {
+		owner, list := o.id, o.list
+		seen := make(map[string]bool)
+		var rebuilt []string
+		for _, id := range *list {
+			if m, ok := byID[id]; ok && *m.owner == owner && !seen[id] {
+				seen[id] = true
+				rebuilt = append(rebuilt, id)
+			}
+		}
+		for _, m := range members {
+			if *m.owner == owner && !seen[m.id] {
+				seen[m.id] = true
+				rebuilt = append(rebuilt, m.id)
+			}
+		}
+		*list = rebuilt
+	}
 }

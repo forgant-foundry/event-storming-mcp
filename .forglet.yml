@@ -4,6 +4,7 @@ module: "github.com/forgant-foundry/event-storming-mcp"
 require:
   github.com/mark3labs/mcp-go: "v0.54.0"
   github.com/spf13/cobra: "v1.8.0"
+  github.com/cucumber/gherkin/go/v42: "v42.0.1"
 git: true
 gitignore:
   - .env

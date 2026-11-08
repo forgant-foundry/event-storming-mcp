@@ -66,7 +66,7 @@ func Emit(s *session.Session, outDir string) (*Summary, error) {
 		ctxTagName := "unknown"
 		if hasCtx {
 			ctxDirName = Slug(ctx.Name)
-			ctxTagName = ctx.Name
+			ctxTagName = Slug(ctx.Name)
 		}
 
 		dir := filepath.Join(outDir, ctxDirName)
@@ -124,7 +124,8 @@ func buildFeature(
 ) (content string, warnings []string, scenarioCount int) {
 	var b strings.Builder
 
-	tags := fmt.Sprintf("@context:%s @aggregate:%s", ctxTag, agg.Name)
+	// Gherkin tags may not contain whitespace, so names are slugged.
+	tags := fmt.Sprintf("@context:%s @aggregate:%s", ctxTag, Slug(agg.Name))
 	if agg.Deprecated {
 		tags += " @deprecated"
 	}
@@ -176,7 +177,7 @@ func buildFeature(
 			for i, evt := range unconditional {
 				kw := "Then"
 				if i > 0 {
-					kw = "And "
+					kw = "And"
 				}
 				b.WriteString(fmt.Sprintf("    %s %s\n", kw, ThenStep(evt.Name)))
 			}
@@ -200,10 +201,12 @@ func buildFeature(
 			b.WriteString(fmt.Sprintf("    Then %s\n", ThenStep(evt.Name)))
 		}
 
-		// If every event was conditional, warn that there is no happy-path scenario.
-		if len(unconditional) == 0 {
+		// A lone conditional event with no happy path is usually a gap. Two or
+		// more conditional events with no unconditional one is a branch, and
+		// each branch already has its own scenario.
+		if len(unconditional) == 0 && len(conditional) == 1 {
 			warnings = append(warnings, fmt.Sprintf(
-				"command %q has only conditional events — no happy-path scenario emitted",
+				"command %q has a single conditional event and no happy path — add the unconditional outcome or a second branch",
 				cmd.Name,
 			))
 		}
@@ -223,7 +226,7 @@ func buildFeature(
 			for i, evt := range aggEvents {
 				kw := "Then"
 				if i > 0 {
-					kw = "And "
+					kw = "And"
 				}
 				b.WriteString(fmt.Sprintf("    %s %s\n", kw, ThenStep(evt.Name)))
 			}

@@ -1,7 +1,10 @@
 package session_test
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -459,5 +462,95 @@ func TestAddPolicyReadModelHotSpot(t *testing.T) {
 	if len(loaded.Policies) != 1 || len(loaded.ReadModels) != 1 || len(loaded.HotSpots) != 1 {
 		t.Errorf("persistence: policies=%d readmodels=%d hotspots=%d",
 			len(loaded.Policies), len(loaded.ReadModels), len(loaded.HotSpots))
+	}
+}
+
+func TestAddWithAggregateID(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	s, _ := session.New("Ordering", "")
+	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", nil, nil)
+
+	_, cmd, err := session.AddCommand(s.ID, "PlaceOrder", "", "", agg.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, evt, err := session.AddEvent(s.ID, "OrderPlaced", "", cmd.ID, agg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, _ := session.Load(s.ID)
+	got := loaded.Aggregates[0]
+	if !slices.Equal(got.CommandIDs, []string{cmd.ID}) {
+		t.Errorf("aggregate command_ids: got %v, want [%s]", got.CommandIDs, cmd.ID)
+	}
+	if !slices.Equal(got.EventIDs, []string{evt.ID}) {
+		t.Errorf("aggregate event_ids: got %v, want [%s]", got.EventIDs, evt.ID)
+	}
+
+	if _, _, err := session.AddCommand(s.ID, "CancelOrder", "", "", "agg_missing", nil); err == nil {
+		t.Error("expected error for unknown aggregate on add_command")
+	}
+	if _, _, err := session.AddEvent(s.ID, "OrderCancelled", "", "", "agg_missing"); err == nil {
+		t.Error("expected error for unknown aggregate on add_event")
+	}
+}
+
+// TestLoadReconcilesMembership writes a session whose two-sided membership has
+// drifted, as older versions allowed, and checks that Load repairs it.
+func TestLoadReconcilesMembership(t *testing.T) {
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	s, _ := session.New("Ordering", "")
+	_, cmd1, _ := session.AddCommand(s.ID, "PlaceOrder", "", "", "", nil)
+	_, cmd2, _ := session.AddCommand(s.ID, "AmendOrder", "", "", "", nil)
+	_, cmd3, _ := session.AddCommand(s.ID, "ShipOrder", "", "", "", nil)
+	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", cmd1.ID, "")
+	_, evt2, _ := session.AddEvent(s.ID, "OrderAmended", "", cmd2.ID, "")
+	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", []string{evt1.ID}, []string{cmd1.ID})
+	_, term, _ := session.DefineTerm(s.ID, "Order", "A request to buy.", "", "", nil)
+	_, ctx, _ := session.ProposeContext(s.ID, "Sales", "", []string{agg.ID}, nil)
+
+	path := filepath.Join(dataHome, "event-storming-mcp", s.ID, "session.json")
+	raw, _ := os.ReadFile(path)
+	var drifted session.Session
+	if err := json.Unmarshal(raw, &drifted); err != nil {
+		t.Fatal(err)
+	}
+	// Member side only: the command points at the aggregate, the aggregate doesn't list it.
+	drifted.Commands[1].AggregateID = agg.ID
+	// Aggregate side only: the aggregate lists an event that doesn't point back,
+	// and one that no longer exists.
+	drifted.Aggregates[0].EventIDs = append(drifted.Aggregates[0].EventIDs, evt2.ID, "evt_gone")
+	// Dangling owner: the command points at an aggregate that doesn't exist.
+	drifted.Commands[2].AggregateID = "agg_gone"
+	// Context side: the term points at the context, the context doesn't list it.
+	drifted.Glossary[0].ContextID = ctx.ID
+	raw, _ = json.Marshal(drifted)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := session.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := loaded.Aggregates[0]
+	if !slices.Equal(a.CommandIDs, []string{cmd1.ID, cmd2.ID}) {
+		t.Errorf("command_ids: got %v, want [%s %s]", a.CommandIDs, cmd1.ID, cmd2.ID)
+	}
+	if !slices.Equal(a.EventIDs, []string{evt1.ID, evt2.ID}) {
+		t.Errorf("event_ids: got %v, want [%s %s]", a.EventIDs, evt1.ID, evt2.ID)
+	}
+	if loaded.Events[1].AggregateID != agg.ID {
+		t.Errorf("listed event should be claimed by the aggregate, got %q", loaded.Events[1].AggregateID)
+	}
+	if loaded.Commands[2].AggregateID != "" {
+		t.Errorf("dangling aggregate_id should be cleared, got %q (cmd %s)", loaded.Commands[2].AggregateID, cmd3.ID)
+	}
+	if !slices.Equal(loaded.BoundedContexts[0].GlossaryTermIDs, []string{term.ID}) {
+		t.Errorf("context glossary_term_ids: got %v, want [%s]", loaded.BoundedContexts[0].GlossaryTermIDs, term.ID)
 	}
 }
