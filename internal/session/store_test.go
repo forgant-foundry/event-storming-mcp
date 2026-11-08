@@ -38,12 +38,12 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatal("expected non-empty actor ID")
 	}
 
-	_, cmd, err := session.AddCommand(s.ID, "PlaceOrder", "", actor.ID, "", []string{"cart is not empty"})
+	_, cmd, err := session.AddCommand(s.ID, "PlaceOrder", "", actor.ID, "", []string{"cart is not empty"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, evt, err := session.AddEvent(s.ID, "OrderPlaced", "emitted when order is confirmed", cmd.ID, "")
+	_, evt, err := session.AddEvent(s.ID, "OrderPlaced", "emitted when order is confirmed", cmd.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestResolveHotSpot(t *testing.T) {
 func TestDeprecateAggregate(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
-	_, evt, _ := session.AddEvent(s.ID, "PeriodClosed", "", "", "")
+	_, evt, _ := session.AddEvent(s.ID, "PeriodClosed", "", "", "", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Period", "", "", []string{evt.ID}, nil)
 
 	_, dep, err := session.DeprecateAggregate(s.ID, agg.ID, "snapshots made period closes redundant")
@@ -137,7 +137,7 @@ func TestDeprecateAggregate(t *testing.T) {
 func TestSetEventCondition(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
-	_, evt, _ := session.AddEvent(s.ID, "PaymentDeclined", "", "", "")
+	_, evt, _ := session.AddEvent(s.ID, "PaymentDeclined", "", "", "", "")
 
 	_, updated, err := session.SetEventCondition(s.ID, evt.ID, "the payment method is invalid")
 	if err != nil {
@@ -161,8 +161,8 @@ func TestLinkEvent(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
 	s, _ := session.New("Linking test", "")
-	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "")
-	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "", "", "", nil)
+	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "", "")
+	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "", "", "", nil, "")
 
 	_, linked, err := session.LinkEvent(s.ID, evt.ID, cmd.ID)
 	if err != nil {
@@ -190,8 +190,8 @@ func TestRemoveEvent(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
 	s, _ := session.New("Remove test", "")
-	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "")
-	_, evt2, _ := session.AddEvent(s.ID, "OrderCancelled", "", "", "")
+	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "", "")
+	_, evt2, _ := session.AddEvent(s.ID, "OrderCancelled", "", "", "", "")
 	session.ClusterAggregate(s.ID, "Order", "", "", []string{evt1.ID, evt2.ID}, nil)
 
 	_, err := session.RemoveEvent(s.ID, evt1.ID)
@@ -222,7 +222,7 @@ func TestSyncPath(t *testing.T) {
 	session.SetSyncPath(s.ID, syncFile)
 
 	// Adding an event should dual-write.
-	session.AddEvent(s.ID, "ThingHappened", "", "", "")
+	session.AddEvent(s.ID, "ThingHappened", "", "", "", "")
 
 	data, err := os.ReadFile(syncFile)
 	if err != nil {
@@ -234,7 +234,7 @@ func TestSyncPath(t *testing.T) {
 
 	// Disabling sync path stops dual-writes.
 	session.SetSyncPath(s.ID, "")
-	session.AddEvent(s.ID, "AnotherThing", "", "", "")
+	session.AddEvent(s.ID, "AnotherThing", "", "", "", "")
 
 	data2, _ := os.ReadFile(syncFile)
 	if strings.Contains(string(data2), "AnotherThing") {
@@ -260,7 +260,7 @@ func TestExportImport(t *testing.T) {
 	}
 
 	// Import gives a fresh session ID
-	imported, originalID, err := session.ImportSession(exportPath)
+	imported, originalID, err := session.ImportSession(exportPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,8 +301,8 @@ func TestClusterAggregate(t *testing.T) {
 
 	s, _ := session.New("Ordering", "")
 	_, actor, _ := session.AddActor(s.ID, "Customer", session.ActorTypePerson, "")
-	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "", actor.ID, "", nil)
-	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", cmd.ID, "")
+	_, cmd, _ := session.AddCommand(s.ID, "PlaceOrder", "", actor.ID, "", nil, "")
+	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", cmd.ID, "", "")
 
 	_, agg, err := session.ClusterAggregate(s.ID, "Order", "", "", []string{evt.ID}, []string{cmd.ID})
 	if err != nil {
@@ -325,8 +325,8 @@ func TestClusterAggregate_Conflicts(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
 	s, _ := session.New("Ordering", "")
-	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "")
-	_, evt2, _ := session.AddEvent(s.ID, "OrderCancelled", "", "", "")
+	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "", "")
+	_, evt2, _ := session.AddEvent(s.ID, "OrderCancelled", "", "", "", "")
 
 	session.ClusterAggregate(s.ID, "Order", "", "", []string{evt1.ID}, nil)
 
@@ -347,7 +347,7 @@ func TestProposeContext(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
 	s, _ := session.New("E-commerce", "")
-	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "")
+	_, evt, _ := session.AddEvent(s.ID, "OrderPlaced", "", "", "", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", []string{evt.ID}, nil)
 	_, term, _ := session.DefineTerm(s.ID, "Order", "A purchase request", "the order", "", nil)
 
@@ -430,11 +430,11 @@ func TestAddPolicyReadModelHotSpot(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
 	s, _ := session.New("Payments", "")
-	_, evt, _ := session.AddEvent(s.ID, "PaymentAuthorised", "", "", "")
-	_, cmd, _ := session.AddCommand(s.ID, "CapturePayment", "", "", "", nil)
+	_, evt, _ := session.AddEvent(s.ID, "PaymentAuthorised", "", "", "", "")
+	_, cmd, _ := session.AddCommand(s.ID, "CapturePayment", "", "", "", nil, "")
 	_, actor, _ := session.AddActor(s.ID, "Payment Gateway", session.ActorTypeExternalSystem, "")
 
-	_, pol, err := session.AddPolicy(s.ID, "Capture on authorise", "", evt.ID, cmd.ID, "")
+	_, pol, err := session.AddPolicy(s.ID, "Capture on authorise", "", evt.ID, cmd.ID, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,12 +442,12 @@ func TestAddPolicyReadModelHotSpot(t *testing.T) {
 		t.Errorf("policy trigger: got %q", pol.TriggerEventID)
 	}
 
-	_, rm, err := session.AddReadModel(s.ID, "Payment Status", "", actor.ID, "")
+	_, rm, err := session.AddReadModel(s.ID, "Payment Status", "", []string{actor.ID}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rm.ActorID != actor.ID {
-		t.Errorf("read model actor: got %q", rm.ActorID)
+	if !slices.Equal(rm.ActorIDs, []string{actor.ID}) {
+		t.Errorf("read model actors: got %v", rm.ActorIDs)
 	}
 
 	_, hs, err := session.AddHotSpot(s.ID, "Who owns refund approval?", "")
@@ -471,11 +471,11 @@ func TestAddWithAggregateID(t *testing.T) {
 	s, _ := session.New("Ordering", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", nil, nil)
 
-	_, cmd, err := session.AddCommand(s.ID, "PlaceOrder", "", "", agg.ID, nil)
+	_, cmd, err := session.AddCommand(s.ID, "PlaceOrder", "", "", agg.ID, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, evt, err := session.AddEvent(s.ID, "OrderPlaced", "", cmd.ID, agg.ID)
+	_, evt, err := session.AddEvent(s.ID, "OrderPlaced", "", cmd.ID, agg.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,10 +489,10 @@ func TestAddWithAggregateID(t *testing.T) {
 		t.Errorf("aggregate event_ids: got %v, want [%s]", got.EventIDs, evt.ID)
 	}
 
-	if _, _, err := session.AddCommand(s.ID, "CancelOrder", "", "", "agg_missing", nil); err == nil {
+	if _, _, err := session.AddCommand(s.ID, "CancelOrder", "", "", "agg_missing", nil, ""); err == nil {
 		t.Error("expected error for unknown aggregate on add_command")
 	}
-	if _, _, err := session.AddEvent(s.ID, "OrderCancelled", "", "", "agg_missing"); err == nil {
+	if _, _, err := session.AddEvent(s.ID, "OrderCancelled", "", "", "agg_missing", ""); err == nil {
 		t.Error("expected error for unknown aggregate on add_event")
 	}
 }
@@ -504,11 +504,11 @@ func TestLoadReconcilesMembership(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", dataHome)
 
 	s, _ := session.New("Ordering", "")
-	_, cmd1, _ := session.AddCommand(s.ID, "PlaceOrder", "", "", "", nil)
-	_, cmd2, _ := session.AddCommand(s.ID, "AmendOrder", "", "", "", nil)
-	_, cmd3, _ := session.AddCommand(s.ID, "ShipOrder", "", "", "", nil)
-	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", cmd1.ID, "")
-	_, evt2, _ := session.AddEvent(s.ID, "OrderAmended", "", cmd2.ID, "")
+	_, cmd1, _ := session.AddCommand(s.ID, "PlaceOrder", "", "", "", nil, "")
+	_, cmd2, _ := session.AddCommand(s.ID, "AmendOrder", "", "", "", nil, "")
+	_, cmd3, _ := session.AddCommand(s.ID, "ShipOrder", "", "", "", nil, "")
+	_, evt1, _ := session.AddEvent(s.ID, "OrderPlaced", "", cmd1.ID, "", "")
+	_, evt2, _ := session.AddEvent(s.ID, "OrderAmended", "", cmd2.ID, "", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", []string{evt1.ID}, []string{cmd1.ID})
 	_, term, _ := session.DefineTerm(s.ID, "Order", "A request to buy.", "", "", nil)
 	_, ctx, _ := session.ProposeContext(s.ID, "Sales", "", []string{agg.ID}, nil)

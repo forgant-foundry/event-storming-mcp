@@ -42,9 +42,9 @@ func buildChatSession(t *testing.T) *session.Session {
 
 	_, actor, _ := session.AddActor(s.ID, "User", session.ActorTypePerson, "")
 	_, cmd, _ := session.AddCommand(s.ID, "SendMessage", "", actor.ID, "",
-		[]string{"user is a member of the channel"})
-	_, evt, _ := session.AddEvent(s.ID, "MessageSent", "", cmd.ID, "")
-	_, _, _ = session.AddEvent(s.ID, "NotificationSent", "", cmd.ID, "")
+		[]string{"user is a member of the channel"}, "")
+	_, evt, _ := session.AddEvent(s.ID, "MessageSent", "", cmd.ID, "", "")
+	_, _, _ = session.AddEvent(s.ID, "NotificationSent", "", cmd.ID, "", "")
 
 	_, agg, _ := session.ClusterAggregate(s.ID, "Message", "",
 		"", []string{evt.ID}, []string{cmd.ID})
@@ -157,10 +157,10 @@ func TestEmit_ContextMap(t *testing.T) {
 func TestEmit_UncategorisedAggregate(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
-	_, evt, _ := session.AddEvent(s.ID, "ThingHappened", "", "", "")
-	_, cmd, _ := session.AddCommand(s.ID, "DoThing", "", "", "", nil)
+	_, evt, _ := session.AddEvent(s.ID, "ThingHappened", "", "", "", "")
+	_, cmd, _ := session.AddCommand(s.ID, "DoThing", "", "", "", nil, "")
 	// Link event to command so a scenario is emitted.
-	session.AddEvent(s.ID, "ThingHappened2", "", cmd.ID, "")
+	session.AddEvent(s.ID, "ThingHappened2", "", cmd.ID, "", "")
 	session.ClusterAggregate(s.ID, "Thing", "", "", []string{evt.ID}, []string{cmd.ID})
 
 	loaded, _ := session.Load(s.ID)
@@ -183,8 +183,8 @@ func TestEmit_WarnOnCommandWithNoEvents(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
 	_, actor, _ := session.AddActor(s.ID, "User", session.ActorTypePerson, "")
-	_, cmd, _ := session.AddCommand(s.ID, "DoSomething", "", actor.ID, "", nil)
-	_, evt, _ := session.AddEvent(s.ID, "SomethingDone", "", "", "") // NOT linked to cmd
+	_, cmd, _ := session.AddCommand(s.ID, "DoSomething", "", actor.ID, "", nil, "")
+	_, evt, _ := session.AddEvent(s.ID, "SomethingDone", "", "", "", "") // NOT linked to cmd
 	session.ClusterAggregate(s.ID, "Thing", "", "", []string{evt.ID}, []string{cmd.ID})
 
 	loaded, _ := session.Load(s.ID)
@@ -201,7 +201,7 @@ func TestEmit_WarnOnCommandWithNoEvents(t *testing.T) {
 func TestEmit_DeprecatedAggregate(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
-	_, evt, _ := session.AddEvent(s.ID, "PeriodClosed", "", "", "")
+	_, evt, _ := session.AddEvent(s.ID, "PeriodClosed", "", "", "", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "", "", "", []string{evt.ID}, nil)
 	session.DeprecateAggregate(s.ID, agg.ID, "snapshots made this redundant")
 
@@ -229,9 +229,9 @@ func TestEmit_ConditionalEvent(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
 	_, actor, _ := session.AddActor(s.ID, "User", session.ActorTypePerson, "")
-	_, cmd, _ := session.AddCommand(s.ID, "ProcessPayment", "", actor.ID, "", nil)
-	_, evtOk, _ := session.AddEvent(s.ID, "PaymentProcessed", "", cmd.ID, "")
-	_, evtFail, _ := session.AddEvent(s.ID, "PaymentDeclined", "", cmd.ID, "")
+	_, cmd, _ := session.AddCommand(s.ID, "ProcessPayment", "", actor.ID, "", nil, "")
+	_, evtOk, _ := session.AddEvent(s.ID, "PaymentProcessed", "", cmd.ID, "", "")
+	_, evtFail, _ := session.AddEvent(s.ID, "PaymentDeclined", "", cmd.ID, "", "")
 	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid")
 	session.ClusterAggregate(s.ID, "Payment", "", "", []string{evtOk.ID, evtFail.ID}, []string{cmd.ID})
 
@@ -257,9 +257,9 @@ func TestEmit_ConditionalEventWithPreconditions(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
 	_, actor, _ := session.AddActor(s.ID, "User", session.ActorTypePerson, "")
-	_, cmd, _ := session.AddCommand(s.ID, "ProcessPayment", "", actor.ID, "", []string{"an order is awaiting payment"})
-	_, evtOk, _ := session.AddEvent(s.ID, "PaymentProcessed", "", cmd.ID, "")
-	_, evtFail, _ := session.AddEvent(s.ID, "PaymentDeclined", "", cmd.ID, "")
+	_, cmd, _ := session.AddCommand(s.ID, "ProcessPayment", "", actor.ID, "", []string{"an order is awaiting payment"}, "")
+	_, evtOk, _ := session.AddEvent(s.ID, "PaymentProcessed", "", cmd.ID, "", "")
+	_, evtFail, _ := session.AddEvent(s.ID, "PaymentDeclined", "", cmd.ID, "", "")
 	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid")
 	session.ClusterAggregate(s.ID, "Payment", "", "", []string{evtOk.ID, evtFail.ID}, []string{cmd.ID})
 
@@ -343,24 +343,24 @@ func TestEmit_ParsesAsGherkin(t *testing.T) {
 	_, actor, _ := session.AddActor(s.ID, "Cell Agent", session.ActorTypeRole, "")
 
 	// Happy path with two events, plus conditional events with and without preconditions.
-	_, rate, _ := session.AddCommand(s.ID, "RateThreat", "", actor.ID, "", []string{"a threat is identified"})
-	_, rated, _ := session.AddEvent(s.ID, "ThreatRated", "", rate.ID, "")
-	_, logged, _ := session.AddEvent(s.ID, "RatingLogged", "", rate.ID, "")
-	_, above, _ := session.AddEvent(s.ID, "ThreatEscalated", "", rate.ID, "")
+	_, rate, _ := session.AddCommand(s.ID, "RateThreat", "", actor.ID, "", []string{"a threat is identified"}, "")
+	_, rated, _ := session.AddEvent(s.ID, "ThreatRated", "", rate.ID, "", "")
+	_, logged, _ := session.AddEvent(s.ID, "RatingLogged", "", rate.ID, "", "")
+	_, above, _ := session.AddEvent(s.ID, "ThreatEscalated", "", rate.ID, "", "")
 	session.SetEventCondition(s.ID, above.ID, "the threat is above the bug bar")
-	_, start, _ := session.AddCommand(s.ID, "StartReview", "", actor.ID, "", nil)
-	_, fresh, _ := session.AddEvent(s.ID, "FreshReviewStarted", "", start.ID, "")
-	_, cont, _ := session.AddEvent(s.ID, "ReviewResumed", "", start.ID, "")
+	_, start, _ := session.AddCommand(s.ID, "StartReview", "", actor.ID, "", nil, session.SourceFacilitator)
+	_, fresh, _ := session.AddEvent(s.ID, "FreshReviewStarted", "", start.ID, "", "")
+	_, cont, _ := session.AddEvent(s.ID, "ReviewResumed", "", start.ID, "", "")
 	session.SetEventCondition(s.ID, fresh.ID, "no review exists")
 	session.SetEventCondition(s.ID, cont.ID, "a review exists")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Threat Register", "Rule: every threat is rated against the bug bar", "",
 		[]string{rated.ID, logged.ID, above.ID, fresh.ID, cont.ID}, []string{rate.ID, start.ID})
 
 	// Stub aggregate (events, no commands) and a deprecated aggregate.
-	_, e1, _ := session.AddEvent(s.ID, "BudgetSet", "", "", "")
-	_, e2, _ := session.AddEvent(s.ID, "BudgetRaised", "", "", "")
+	_, e1, _ := session.AddEvent(s.ID, "BudgetSet", "", "", "", "")
+	_, e2, _ := session.AddEvent(s.ID, "BudgetRaised", "", "", "", "")
 	_, stub, _ := session.ClusterAggregate(s.ID, "Budget Envelope", "", "", []string{e1.ID, e2.ID}, nil)
-	_, e3, _ := session.AddEvent(s.ID, "LegacyThing", "", "", "")
+	_, e3, _ := session.AddEvent(s.ID, "LegacyThing", "", "", "", "")
 	_, dep, _ := session.ClusterAggregate(s.ID, "Old Ledger", "", "", []string{e3.ID}, nil)
 	session.DeprecateAggregate(s.ID, dep.ID, "superseded")
 
@@ -378,6 +378,12 @@ func TestEmit_ParsesAsGherkin(t *testing.T) {
 	if !strings.HasPrefix(content, "@context:cell-judgment @aggregate:threat-register\n") {
 		t.Errorf("tags should be slugged:\n%s", content)
 	}
+	if !strings.Contains(content, "  @proposed\n  Scenario: cell agent starts a review (no review exists)\n") {
+		t.Errorf("facilitator-sourced scenarios should be tagged @proposed:\n%s", content)
+	}
+	if strings.Count(content, "@proposed") != 2 {
+		t.Errorf("only StartReview's two scenarios should be @proposed:\n%s", content)
+	}
 	if strings.Contains(content, "And  ") {
 		t.Errorf("And should be followed by a single space:\n%s", content)
 	}
@@ -388,15 +394,15 @@ func TestEmit_ConditionalOnlyWarnings(t *testing.T) {
 	s, _ := session.New("Test", "")
 
 	// Two conditional outcomes and no unconditional one: a branch, no warning.
-	_, branch, _ := session.AddCommand(s.ID, "StartEventStorming", "", "", "", nil)
-	_, empty, _ := session.AddEvent(s.ID, "GreenfieldStarted", "", branch.ID, "")
-	_, existing, _ := session.AddEvent(s.ID, "BrownfieldStarted", "", branch.ID, "")
+	_, branch, _ := session.AddCommand(s.ID, "StartEventStorming", "", "", "", nil, "")
+	_, empty, _ := session.AddEvent(s.ID, "GreenfieldStarted", "", branch.ID, "", "")
+	_, existing, _ := session.AddEvent(s.ID, "BrownfieldStarted", "", branch.ID, "", "")
 	session.SetEventCondition(s.ID, empty.ID, "the target repo has no code")
 	session.SetEventCondition(s.ID, existing.ID, "the target repo has existing code")
 
 	// One conditional outcome and no happy path: a gap, warned.
-	_, gap, _ := session.AddCommand(s.ID, "ApproveScope", "", "", "", nil)
-	_, rejected, _ := session.AddEvent(s.ID, "ScopeRejected", "", gap.ID, "")
+	_, gap, _ := session.AddCommand(s.ID, "ApproveScope", "", "", "", nil, "")
+	_, rejected, _ := session.AddEvent(s.ID, "ScopeRejected", "", gap.ID, "", "")
 	session.SetEventCondition(s.ID, rejected.ID, "the scope is incomplete")
 
 	session.ClusterAggregate(s.ID, "Scope", "", "",

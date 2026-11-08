@@ -49,7 +49,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. The 23 tools will appear automatically.
+Restart Claude Desktop. The 33 tools will appear automatically.
 
 ### Claude Code
 
@@ -94,7 +94,7 @@ Claude will call `get_playbook("run-event-storming")` and follow the facilitatio
 script, calling tools as it goes. At the end, call `emit_gherkin` to write the
 output files.
 
-## Tools (23)
+## Tools (33)
 
 ### Session
 | Tool | Description |
@@ -116,10 +116,22 @@ output files.
 | Tool | Description |
 |---|---|
 | `link_event` | Set the triggering command on an existing event (avoids duplicates) |
-| `remove_event` | Delete an event and detach it from its aggregate |
+| `remove_event` | Delete an event and detach it from its aggregate and policies |
 | `set_event_condition` | Mark an event as conditional (e.g. a rejection); emitted as its own scenario |
 | `resolve_hotspot` | Close a hot spot with the decision that resolved it |
 | `deprecate_aggregate` | Mark an aggregate obsolete; its feature file is tagged `@deprecated` with no scenarios |
+
+### Editing
+| Tool | Description |
+|---|---|
+| `update_event`, `update_command`, `update_actor`, `update_policy`, `update_read_model`, `update_aggregate`, `update_bounded_context` | Change only the fields passed; an empty string clears a field |
+| `assign_to_aggregate` | Add events and commands to an existing aggregate (`move` to take them from another) |
+| `assign_to_context` | Add aggregates and glossary terms to an existing bounded context |
+| `remove_item` | Delete any record; every reference to it is cleared and reported |
+
+Capture and update tools take an optional `source` — `expert`, `facilitator` or
+`imported` — and scenarios built from facilitator-sourced notes are tagged `@proposed`.
+Policies take an optional `condition`; read models take several readers in `actor_ids`.
 
 ### Glossary
 | Tool | Description |
@@ -142,7 +154,7 @@ output files.
 | Tool | Description |
 |---|---|
 | `export_session` | Write session to a JSON file for version control or sharing |
-| `import_session` | Load a session from an exported file; returns a new local session ID |
+| `import_session` | Load a session from an exported file; returns a new local session ID. Pass `sync_path` to replace the file's own |
 | `set_sync_path` | Configure a project-local file to stay in sync on every save |
 
 ### Playbooks

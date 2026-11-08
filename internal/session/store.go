@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -71,6 +72,7 @@ func Save(s *Session) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	reconcile(s)
 	s.UpdatedAt = time.Now()
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -120,7 +122,12 @@ func ExportSession(sessionID, destPath string) error {
 // ImportSession reads a session JSON from srcPath, assigns it a fresh local
 // session ID to avoid collisions, and saves it to the XDG store.
 // Returns the new session so the caller can relay the new ID to the user.
-func ImportSession(srcPath string) (*Session, string, error) {
+//
+// The imported session keeps its sync_path unless syncPath is non-nil, in
+// which case it replaces it before the first save ("" disables syncing). A
+// relative sync_path resolves against the server's working directory, so
+// importing from another project should pass an override.
+func ImportSession(srcPath string, syncPath *string) (*Session, string, error) {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot read %s: %w", srcPath, err)
@@ -129,25 +136,27 @@ func ImportSession(srcPath string) (*Session, string, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, "", fmt.Errorf("invalid session file: %w", err)
 	}
-	reconcile(&s)
 	originalID := s.ID
 	s.ID = newID("ses")
+	if syncPath != nil {
+		s.SyncPath = *syncPath
+	}
 	if err := Save(&s); err != nil {
 		return nil, "", err
 	}
 	return &s, originalID, nil
 }
 
-func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string) (*Session, *Event, error) {
+func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string, source Source) (*Session, *Event, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
-	aggIdx := -1
-	if aggregateID != "" {
-		if aggIdx = aggregateIndex(s, aggregateID); aggIdx < 0 {
-			return nil, nil, fmt.Errorf("aggregate %s not found", aggregateID)
-		}
+	if err := checkSource(source); err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkRefs(KindCommand, triggerCommandID, KindAggregate, aggregateID); err != nil {
+		return nil, nil, err
 	}
 	e := Event{
 		ID:               newID("evt"),
@@ -155,28 +164,26 @@ func AddEvent(sessionID, name, notes, triggerCommandID, aggregateID string) (*Se
 		Notes:            notes,
 		TriggerCommandID: triggerCommandID,
 		AggregateID:      aggregateID,
+		Source:           source,
 		CreatedAt:        time.Now(),
 	}
 	s.Events = append(s.Events, e)
-	if aggIdx >= 0 {
-		s.Aggregates[aggIdx].EventIDs = append(s.Aggregates[aggIdx].EventIDs, e.ID)
-	}
 	if err := Save(s); err != nil {
 		return nil, nil, err
 	}
 	return s, &s.Events[len(s.Events)-1], nil
 }
 
-func AddCommand(sessionID, name, notes, actorID, aggregateID string, preconditions []string) (*Session, *Command, error) {
+func AddCommand(sessionID, name, notes, actorID, aggregateID string, preconditions []string, source Source) (*Session, *Command, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
-	aggIdx := -1
-	if aggregateID != "" {
-		if aggIdx = aggregateIndex(s, aggregateID); aggIdx < 0 {
-			return nil, nil, fmt.Errorf("aggregate %s not found", aggregateID)
-		}
+	if err := checkSource(source); err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkRefs(KindActor, actorID, KindAggregate, aggregateID); err != nil {
+		return nil, nil, err
 	}
 	c := Command{
 		ID:            newID("cmd"),
@@ -185,12 +192,10 @@ func AddCommand(sessionID, name, notes, actorID, aggregateID string, preconditio
 		ActorID:       actorID,
 		AggregateID:   aggregateID,
 		Preconditions: preconditions,
+		Source:        source,
 		CreatedAt:     time.Now(),
 	}
 	s.Commands = append(s.Commands, c)
-	if aggIdx >= 0 {
-		s.Aggregates[aggIdx].CommandIDs = append(s.Aggregates[aggIdx].CommandIDs, c.ID)
-	}
 	if err := Save(s); err != nil {
 		return nil, nil, err
 	}
@@ -281,6 +286,9 @@ func LinkEvent(sessionID, eventID, commandID string) (*Session, *Event, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.checkRefs(KindCommand, commandID); err != nil {
+		return nil, nil, err
+	}
 	for i := range s.Events {
 		if s.Events[i].ID == eventID {
 			s.Events[i].TriggerCommandID = commandID
@@ -293,43 +301,21 @@ func LinkEvent(sessionID, eventID, commandID string) (*Session, *Event, error) {
 	return nil, nil, fmt.Errorf("event %s not found", eventID)
 }
 
-// RemoveEvent deletes an event by ID and removes it from any aggregate that references it.
+// RemoveEvent deletes an event by ID and detaches it from anything that references it.
 func RemoveEvent(sessionID, eventID string) (*Session, error) {
-	s, err := Load(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	found := false
-	var events []Event
-	for _, e := range s.Events {
-		if e.ID == eventID {
-			found = true
-			continue
-		}
-		events = append(events, e)
-	}
-	if !found {
-		return nil, fmt.Errorf("event %s not found", eventID)
-	}
-	s.Events = events
-	for i := range s.Aggregates {
-		var eids []string
-		for _, eid := range s.Aggregates[i].EventIDs {
-			if eid != eventID {
-				eids = append(eids, eid)
-			}
-		}
-		s.Aggregates[i].EventIDs = eids
-	}
-	if err := Save(s); err != nil {
-		return nil, err
-	}
-	return s, nil
+	s, _, err := RemoveItem(sessionID, KindEvent, eventID)
+	return s, err
 }
 
-func AddPolicy(sessionID, name, notes, triggerEventID, resultingCommandID, contextID string) (*Session, *Policy, error) {
+func AddPolicy(sessionID, name, notes, triggerEventID, resultingCommandID, contextID, condition string, source Source) (*Session, *Policy, error) {
 	s, err := Load(sessionID)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkSource(source); err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkRefs(KindEvent, triggerEventID, KindCommand, resultingCommandID, KindContext, contextID); err != nil {
 		return nil, nil, err
 	}
 	p := Policy{
@@ -339,6 +325,8 @@ func AddPolicy(sessionID, name, notes, triggerEventID, resultingCommandID, conte
 		TriggerEventID:     triggerEventID,
 		ResultingCommandID: resultingCommandID,
 		ContextID:          contextID,
+		Condition:          condition,
+		Source:             source,
 		CreatedAt:          time.Now(),
 	}
 	s.Policies = append(s.Policies, p)
@@ -348,17 +336,29 @@ func AddPolicy(sessionID, name, notes, triggerEventID, resultingCommandID, conte
 	return s, &s.Policies[len(s.Policies)-1], nil
 }
 
-func AddReadModel(sessionID, name, notes, actorID, contextID string) (*Session, *ReadModel, error) {
+func AddReadModel(sessionID, name, notes string, actorIDs []string, contextID string, source Source) (*Session, *ReadModel, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if err := checkSource(source); err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkRefs(KindContext, contextID); err != nil {
+		return nil, nil, err
+	}
+	for _, id := range actorIDs {
+		if err := s.checkRefs(KindActor, id); err != nil {
+			return nil, nil, err
+		}
 	}
 	rm := ReadModel{
 		ID:        newID("rm"),
 		Name:      name,
 		Notes:     notes,
-		ActorID:   actorID,
+		ActorIDs:  actorIDs,
 		ContextID: contextID,
+		Source:    source,
 		CreatedAt: time.Now(),
 	}
 	s.ReadModels = append(s.ReadModels, rm)
@@ -371,6 +371,9 @@ func AddReadModel(sessionID, name, notes, actorID, contextID string) (*Session, 
 func AddHotSpot(sessionID, question, contextID string) (*Session, *HotSpot, error) {
 	s, err := Load(sessionID)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkRefs(KindContext, contextID); err != nil {
 		return nil, nil, err
 	}
 	hs := HotSpot{
@@ -393,6 +396,9 @@ func AddHotSpot(sessionID, question, contextID string) (*Session, *HotSpot, erro
 func ClusterAggregate(sessionID, name, notes, contextID string, eventIDs, commandIDs []string) (*Session, *Aggregate, error) {
 	s, err := Load(sessionID)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkRefs(KindContext, contextID); err != nil {
 		return nil, nil, err
 	}
 
@@ -519,6 +525,9 @@ func DefineTerm(sessionID, term, definition, canonicalPhrasing, contextID string
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.checkRefs(KindContext, contextID); err != nil {
+		return nil, nil, err
+	}
 	for i := range s.Glossary {
 		if s.Glossary[i].Term == term {
 			s.Glossary[i].Definition = definition
@@ -549,20 +558,24 @@ func DefineTerm(sessionID, term, definition, canonicalPhrasing, contextID string
 	return s, &s.Glossary[len(s.Glossary)-1], nil
 }
 
-func aggregateIndex(s *Session, id string) int {
-	for i := range s.Aggregates {
-		if s.Aggregates[i].ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
 // reconcile repairs membership that is stored on both sides: an aggregate's
 // event_ids/command_ids against each member's aggregate_id, and a context's
 // aggregate_ids/glossary_term_ids against each member's context_id. Sessions
-// written by older versions could let the two sides drift apart.
+// written by older versions could let the two sides drift apart. Save runs it
+// too, so mutations only need to set the member side.
+//
+// It also folds the legacy single read model actor_id into actor_ids.
 func reconcile(s *Session) {
+	for i := range s.ReadModels {
+		rm := &s.ReadModels[i]
+		if rm.ActorID != "" {
+			if !slices.Contains(rm.ActorIDs, rm.ActorID) {
+				rm.ActorIDs = append([]string{rm.ActorID}, rm.ActorIDs...)
+			}
+			rm.ActorID = ""
+		}
+	}
+
 	aggLists := make([]ownerList, len(s.Aggregates))
 	aggCmdLists := make([]ownerList, len(s.Aggregates))
 	for i := range s.Aggregates {

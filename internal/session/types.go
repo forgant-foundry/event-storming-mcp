@@ -10,6 +10,17 @@ const (
 	ActorTypeExternalSystem ActorType = "external_system"
 )
 
+// Source records who a sticky note came from: what the domain expert said,
+// what the facilitator proposed and the expert confirmed, or what was seeded
+// from existing material.
+type Source string
+
+const (
+	SourceExpert      Source = "expert"
+	SourceFacilitator Source = "facilitator"
+	SourceImported    Source = "imported"
+)
+
 type Event struct {
 	ID               string    `json:"id"`
 	Name             string    `json:"name"`
@@ -18,6 +29,7 @@ type Event struct {
 	ContextID        string    `json:"context_id,omitempty"`
 	Notes            string    `json:"notes,omitempty"`
 	Condition        string    `json:"condition,omitempty"` // non-empty = conditionally emitted; emitted as a separate Scenario with this as an additional Given
+	Source           Source    `json:"source,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -28,6 +40,7 @@ type Command struct {
 	AggregateID   string    `json:"aggregate_id,omitempty"`
 	Preconditions []string  `json:"preconditions,omitempty"`
 	Notes         string    `json:"notes,omitempty"`
+	Source        Source    `json:"source,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -45,16 +58,20 @@ type Policy struct {
 	TriggerEventID     string    `json:"trigger_event_id,omitempty"`
 	ResultingCommandID string    `json:"resulting_command_id,omitempty"`
 	ContextID          string    `json:"context_id,omitempty"`
+	Condition          string    `json:"condition,omitempty"` // the policy applies only when this holds, e.g. "the assessment found no gaps"
 	Notes              string    `json:"notes,omitempty"`
+	Source             Source    `json:"source,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 }
 
 type ReadModel struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	ActorID   string    `json:"actor_id,omitempty"`
+	ActorIDs  []string  `json:"actor_ids,omitempty"`
+	ActorID   string    `json:"actor_id,omitempty"` // legacy single reader; folded into ActorIDs on load
 	ContextID string    `json:"context_id,omitempty"`
 	Notes     string    `json:"notes,omitempty"`
+	Source    Source    `json:"source,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

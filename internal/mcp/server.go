@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime/debug"
+	"slices"
 
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -49,6 +50,17 @@ func New() *server.MCPServer {
 	s.AddTool(exportSessionTool(), handleExportSession)
 	s.AddTool(importSessionTool(), handleImportSession)
 	s.AddTool(setSyncPathTool(), handleSetSyncPath)
+
+	s.AddTool(updateEventTool(), handleUpdateEvent)
+	s.AddTool(updateCommandTool(), handleUpdateCommand)
+	s.AddTool(updateActorTool(), handleUpdateActor)
+	s.AddTool(updatePolicyTool(), handleUpdatePolicy)
+	s.AddTool(updateReadModelTool(), handleUpdateReadModel)
+	s.AddTool(updateAggregateTool(), handleUpdateAggregate)
+	s.AddTool(updateContextTool(), handleUpdateContext)
+	s.AddTool(assignToAggregateTool(), handleAssignToAggregate)
+	s.AddTool(assignToContextTool(), handleAssignToContext)
+	s.AddTool(removeItemTool(), handleRemoveItem)
 
 	return s
 }
@@ -135,6 +147,7 @@ func addEventTool() libmcp.Tool {
 		libmcp.WithString("notes", libmcp.Description("Optional clarifying notes")),
 		libmcp.WithString("trigger_command_id", libmcp.Description("ID of the command that triggered this event")),
 		libmcp.WithString("aggregate_id", libmcp.Description("ID of the aggregate this event belongs to")),
+		withSource(),
 	)
 }
 
@@ -152,6 +165,7 @@ func handleAddEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 		req.GetString("notes", ""),
 		req.GetString("trigger_command_id", ""),
 		req.GetString("aggregate_id", ""),
+		session.Source(req.GetString("source", "")),
 	)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
@@ -173,6 +187,7 @@ func addCommandTool() libmcp.Tool {
 		libmcp.WithArray("preconditions",
 			libmcp.Description("Precondition strings that must hold before the command can be issued"),
 		),
+		withSource(),
 	)
 }
 
@@ -191,6 +206,7 @@ func handleAddCommand(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 		req.GetString("actor_id", ""),
 		req.GetString("aggregate_id", ""),
 		req.GetStringSlice("preconditions", nil),
+		session.Source(req.GetString("source", "")),
 	)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
@@ -224,12 +240,8 @@ func handleAddActor(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	actorType := session.ActorType(req.GetString("type", ""))
-	switch actorType {
-	case session.ActorTypePerson, session.ActorTypeRole, session.ActorTypeExternalSystem:
-	default:
-		return libmcp.NewToolResultError(
-			fmt.Sprintf("type must be one of: person, role, external_system; got %q", actorType),
-		), nil
+	if err := session.CheckActorType(actorType); err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	_, a, err := session.AddActor(sessionID, name, actorType, req.GetString("notes", ""))
 	if err != nil {
@@ -316,7 +328,7 @@ func handleLinkEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Cal
 
 func removeEventTool() libmcp.Tool {
 	return libmcp.NewTool("remove_event",
-		libmcp.WithDescription("Delete an event from the session and remove it from any aggregate that references it. Use this to prune spurious events or clean up duplicates created by re-adding events instead of using link_event."),
+		libmcp.WithDescription("Delete an event from the session and detach it from any aggregate or policy that references it. Use this to prune spurious events or clean up duplicates created by re-adding events instead of using link_event. Equivalent to remove_item with kind=event."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("event_id", libmcp.Required(), libmcp.Description("ID of the event to remove")),
 	)
@@ -438,7 +450,9 @@ func addPolicyTool() libmcp.Tool {
 		libmcp.WithString("trigger_event_id", libmcp.Description("ID of the event that triggers this policy")),
 		libmcp.WithString("resulting_command_id", libmcp.Description("ID of the command this policy issues")),
 		libmcp.WithString("context_id", libmcp.Description("ID of the bounded context this policy belongs to")),
+		libmcp.WithString("condition", libmcp.Description("Optional condition under which the policy applies, beyond the trigger event (e.g. 'the assessment found no gaps')")),
 		libmcp.WithString("notes", libmcp.Description("Optional clarifying notes")),
+		withSource(),
 	)
 }
 
@@ -457,6 +471,8 @@ func handleAddPolicy(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Cal
 		req.GetString("trigger_event_id", ""),
 		req.GetString("resulting_command_id", ""),
 		req.GetString("context_id", ""),
+		req.GetString("condition", ""),
+		session.Source(req.GetString("source", "")),
 	)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
@@ -472,9 +488,11 @@ func addReadModelTool() libmcp.Tool {
 			libmcp.Required(),
 			libmcp.Description("Read model name (e.g. 'Order Summary', 'Inventory Levels')"),
 		),
-		libmcp.WithString("actor_id", libmcp.Description("ID of the actor who consults this read model")),
+		libmcp.WithArray("actor_ids", libmcp.WithStringItems(), libmcp.Description("IDs of the actors who consult this read model")),
+		libmcp.WithString("actor_id", libmcp.Description("Deprecated: a single reader; use actor_ids")),
 		libmcp.WithString("context_id", libmcp.Description("ID of the bounded context this read model belongs to")),
 		libmcp.WithString("notes", libmcp.Description("Optional clarifying notes")),
+		withSource(),
 	)
 }
 
@@ -487,11 +505,16 @@ func handleAddReadModel(_ context.Context, req libmcp.CallToolRequest) (*libmcp.
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
+	actorIDs := req.GetStringSlice("actor_ids", nil)
+	if id := req.GetString("actor_id", ""); id != "" && !slices.Contains(actorIDs, id) {
+		actorIDs = append([]string{id}, actorIDs...)
+	}
 	_, rm, err := session.AddReadModel(
 		sessionID, name,
 		req.GetString("notes", ""),
-		req.GetString("actor_id", ""),
+		actorIDs,
 		req.GetString("context_id", ""),
+		session.Source(req.GetString("source", "")),
 	)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
@@ -529,7 +552,7 @@ func handleAddHotSpot(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 
 func clusterAggregateTool() libmcp.Tool {
 	return libmcp.NewTool("cluster_aggregate",
-		libmcp.WithDescription("Group events and commands into an aggregate (consistency boundary). Each event and command may only belong to one aggregate. Returns the aggregate record."),
+		libmcp.WithDescription("Create an aggregate (consistency boundary) and group events and commands into it. Each event and command may only belong to one aggregate. To add to an aggregate that already exists, use assign_to_aggregate. Returns the aggregate record."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("name",
 			libmcp.Required(),
@@ -570,7 +593,7 @@ func handleClusterAggregate(_ context.Context, req libmcp.CallToolRequest) (*lib
 
 func proposeContextTool() libmcp.Tool {
 	return libmcp.NewTool("propose_bounded_context",
-		libmcp.WithDescription("Group aggregates and glossary terms into a bounded context. Each aggregate may only belong to one context. Returns the bounded context record."),
+		libmcp.WithDescription("Create a bounded context and group aggregates and glossary terms into it. Each aggregate may only belong to one context. To add to a context that already exists, use assign_to_context. Returns the bounded context record."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("name",
 			libmcp.Required(),
@@ -742,6 +765,9 @@ func importSessionTool() libmcp.Tool {
 			libmcp.Required(),
 			libmcp.Description("Path to an exported session JSON file"),
 		),
+		libmcp.WithString("sync_path",
+			libmcp.Description("Optional replacement for the file's sync_path, applied before the first save; empty string disables syncing. A relative sync_path resolves against the server's working directory, so set this when importing a session from another project."),
+		),
 	)
 }
 
@@ -750,7 +776,11 @@ func handleImportSession(_ context.Context, req libmcp.CallToolRequest) (*libmcp
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	s, originalID, err := session.ImportSession(path)
+	syncPath, err := optString(req, "sync_path")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	s, originalID, err := session.ImportSession(path, syncPath)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
@@ -759,6 +789,7 @@ func handleImportSession(_ context.Context, req libmcp.CallToolRequest) (*libmcp
 		"original_session_id": originalID,
 		"name":                s.Name,
 		"description":         s.Description,
+		"sync_path":           s.SyncPath,
 	})
 }
 

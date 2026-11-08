@@ -169,6 +169,7 @@ func buildFeature(
 		if len(unconditional) > 0 {
 			scenarioCount++
 			b.WriteString("\n")
+			writeProposedTag(&b, cmd, unconditional...)
 			b.WriteString(fmt.Sprintf("  Scenario: %s\n", ScenarioTitle(cmd.Name, actor.Name)))
 			for _, pre := range cmd.Preconditions {
 				b.WriteString(fmt.Sprintf("    Given %s\n", pre))
@@ -188,6 +189,7 @@ func buildFeature(
 			scenarioCount++
 			b.WriteString("\n")
 			title := ScenarioTitle(cmd.Name, actor.Name) + " (" + strings.ToLower(evt.Condition) + ")"
+			writeProposedTag(&b, cmd, evt)
 			b.WriteString(fmt.Sprintf("  Scenario: %s\n", title))
 			for _, pre := range cmd.Preconditions {
 				b.WriteString(fmt.Sprintf("    Given %s\n", pre))
@@ -241,6 +243,19 @@ func buildFeature(
 	}
 
 	return b.String(), warnings, scenarioCount
+}
+
+// writeProposedTag tags a scenario @proposed when its command or any of its
+// events came from the facilitator rather than the domain expert, so those
+// scenarios get an extra review.
+func writeProposedTag(b *strings.Builder, cmd session.Command, events ...session.Event) {
+	proposed := cmd.Source == session.SourceFacilitator
+	for _, e := range events {
+		proposed = proposed || e.Source == session.SourceFacilitator
+	}
+	if proposed {
+		b.WriteString("  @proposed\n")
+	}
 }
 
 func buildGlossary(s *session.Session, contextByID map[string]session.BoundedContext) string {

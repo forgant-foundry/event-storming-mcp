@@ -19,7 +19,10 @@ internal/
                 Mutation functions: New, Load, Save, SetSyncPath, ExportSession,
                 ImportSession, AddEvent, AddCommand, AddActor, SetEventCondition,
                 ResolveHotSpot, DeprecateAggregate, LinkEvent, RemoveEvent, AddPolicy,
-                AddReadModel, AddHotSpot, ClusterAggregate, ProposeContext, DefineTerm
+                AddReadModel, AddHotSpot, ClusterAggregate, ProposeContext, DefineTerm;
+                reconcile (two-sided membership repair, run by Load and Save)
+    edit.go     Update*/patch structs, AssignToAggregate, AssignToContext, RemoveItem
+                (cascading delete), reference/source validation helpers
     lint.go     LintStep — checks step text against glossary (alias violations,
                 cross-context leakage)
 
@@ -35,8 +38,11 @@ internal/
       emit-gherkin-specs.md
 
   mcp/
-    server.go   All 23 MCP tool definitions and handlers; server version comes from
-                Go build info (VCS tag), "dev" when unavailable
+    server.go   Session, capture, clustering, emission, portability and playbook
+                tools; server version comes from Go build info (VCS tag), "dev"
+                when unavailable
+    edit.go     update_*, assign_to_*, remove_item; optString/optStrings helpers
+                that tell an omitted argument from an empty one
 
 main.go
 ```
@@ -73,26 +79,44 @@ All IDs are `prefix_<8 random hex bytes>`:
 | `ctx_` | BoundedContext |
 | `term_` | GlossaryTerm |
 
-## MCP Tools (23 total)
+## MCP Tools (33 total)
 
 ### Session management
 - `start_session(name, description, sync_path?)` → session_id
 - `resume_session(session_id)` → full Session
 
 ### Sticky note capture
-- `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?)`
-- `add_command(session_id, name, notes?, actor_id?, aggregate_id?, preconditions?)`
+- `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?, source?)`
+- `add_command(session_id, name, notes?, actor_id?, aggregate_id?, preconditions?, source?)`
 - `add_actor(session_id, name, type)` — type: person | role | external_system
-- `add_policy(session_id, name, trigger_event_id?, resulting_command_id?, context_id?, notes?)`
-- `add_read_model(session_id, name, actor_id?, context_id?, notes?)`
+- `add_policy(session_id, name, trigger_event_id?, resulting_command_id?, context_id?, condition?, notes?, source?)`
+- `add_read_model(session_id, name, actor_ids?, context_id?, notes?, source?)` — `actor_id` still accepted
+
+`source` is expert | facilitator | imported. Facilitator-sourced commands/events emit
+their scenarios tagged `@proposed`.
 - `add_hot_spot(session_id, question, context_id?)`
 
 ### Refinement
 - `link_event(session_id, event_id, command_id)` — set trigger_command_id in place (no duplicate)
-- `remove_event(session_id, event_id)` — also detaches it from any aggregate
+- `remove_event(session_id, event_id)` — same as `remove_item(kind=event)`
 - `set_event_condition(session_id, event_id, condition)` — conditional/rejection event
 - `resolve_hotspot(session_id, hotspot_id, resolution)`
 - `deprecate_aggregate(session_id, aggregate_id, reason?)`
+
+### Editing
+Update tools change only the fields passed; an empty string clears a field, and an
+array replaces the whole list.
+- `update_event(session_id, event_id, name?, notes?, source?)`
+- `update_command(session_id, command_id, name?, notes?, actor_id?, preconditions?, source?)`
+- `update_actor(session_id, actor_id, name?, type?, notes?)`
+- `update_policy(session_id, policy_id, name?, trigger_event_id?, resulting_command_id?, context_id?, condition?, notes?, source?)`
+- `update_read_model(session_id, read_model_id, name?, actor_ids?, context_id?, notes?, source?)`
+- `update_aggregate(session_id, aggregate_id, name?, notes?)`
+- `update_bounded_context(session_id, context_id, name?, description?)`
+- `assign_to_aggregate(session_id, aggregate_id, event_ids?, command_ids?, move?)`
+- `assign_to_context(session_id, context_id, aggregate_ids?, glossary_term_ids?, move?)`
+- `remove_item(session_id, kind, id)` → { removed, kind, detached } — cascades: clears
+  every reference to the removed record and reports each one
 
 ### Glossary
 - `define_term(session_id, term, definition, canonical_phrasing?, aliases?, context_id?)`
@@ -107,7 +131,8 @@ All IDs are `prefix_<8 random hex bytes>`:
 
 ### Portability
 - `export_session(session_id, path)` — write session JSON verbatim
-- `import_session(path)` → new session_id (original ID is replaced to avoid collisions)
+- `import_session(path, sync_path?)` → new session_id (original ID is replaced to avoid
+  collisions); `sync_path` overrides the file's own before the first save
 - `set_sync_path(session_id, path)` — empty path disables syncing
 
 ### Playbooks
@@ -119,11 +144,13 @@ All IDs are `prefix_<8 random hex bytes>`:
 - An event may belong to at most one aggregate (enforced in `ClusterAggregate`)
 - A command may belong to at most one aggregate (enforced in `ClusterAggregate`)
 - An aggregate may belong to at most one bounded context (enforced in `ProposeContext`)
-- `add_event` / `add_command` reject an unknown `aggregate_id` and write both sides
-  of the membership
+- Every ID a tool accepts as a reference (actor, command, event, aggregate, context)
+  must exist; unknown IDs are rejected
+- Mutations set only the member side of a membership; `Save` runs `reconcile`, which
+  rebuilds the owner's list
 - Membership is stored on both sides (`Aggregate.EventIDs`/`CommandIDs` vs. the
   member's `AggregateID`; `BoundedContext.AggregateIDs`/`GlossaryTermIDs` vs. the
-  member's `ContextID`). `Load` and `ImportSession` run `reconcile`, which repairs
+  member's `ContextID`). `Load` and `Save` run `reconcile`, which repairs
   drift: a valid member-side owner wins, list-only entries are claimed, dangling
   owner IDs are cleared
 - "Already assigned to a different X" errors are returned as tool-level errors (not
