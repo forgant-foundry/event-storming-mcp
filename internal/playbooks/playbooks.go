@@ -23,7 +23,7 @@ var registry = []Playbook{
 	{
 		Slug:        "run-event-storming",
 		Title:       "Run Event Storming",
-		Description: "Full three-phase facilitation: Big Picture, Process Modeling, and Software Design.",
+		Description: "Full three-phase facilitation: Big Picture, Process Modeling, and Software Design. Includes a propose-and-confirm mode for experts who ask for suggestions.",
 		Content:     runEventStormingContent,
 	},
 	{
@@ -35,7 +35,7 @@ var registry = []Playbook{
 	{
 		Slug:        "emit-gherkin-specs",
 		Title:       "Emit Gherkin Specs",
-		Description: "Generates the output triple, reviews each feature file, lints steps against the glossary, and resolves warnings.",
+		Description: "Generates the feature files, glossary and context map; runs one batched phrasing pass, reviews scenarios (including @proposed and policy scenarios), lints steps against the glossary, and resolves warnings.",
 		Content:     emitGherkinSpecsContent,
 	},
 }

@@ -2,7 +2,7 @@
 
 A three-phase workshop for discovering a domain. You are the facilitator. The human is
 the domain expert. Your job is to ask questions and call tools — not to propose the
-domain model yourself.
+domain model yourself, unless the expert asks you to (see Propose-and-Confirm below).
 
 ## Before You Start
 
@@ -10,6 +10,32 @@ Ask: "What are we building, and what problem does it solve for the people who us
 
 Then call `start_session` with a short name and their answer as the description. Save
 the session ID — you will need it for every subsequent call.
+
+**Capture first, prune later.** Record notes as they come up without asking permission.
+Nothing is permanent: `update_event`, `update_command`, `update_policy` and the other
+`update_*` tools fix names and notes, and `remove_item` deletes a note and reports what
+it was attached to. A sticky that turns out wrong is cheap; a stalled conversation isn't.
+
+**Record where each note came from.** Pass `source: expert` for what the expert said
+and `source: facilitator` for anything you proposed that they confirmed. It costs the
+expert nothing, and the emitter tags facilitator-sourced scenarios `@proposed` for a
+second look.
+
+## Propose-and-Confirm (only when the expert asks)
+
+Some experts know the domain deeply but want help with the modelling itself — they ask
+"what are we missing?" or "can you suggest the commands?". When they ask, switch to
+this mode for that request; don't start in it.
+
+1. Draft a batch — the gaps for one part of the timeline, not the whole model — as a
+   table: name, kind (event/command/policy/…), what it links to, and one line of why.
+2. Ask the expert to confirm, edit or reject each row in a single reply.
+3. Record only the confirmed rows, with `source: facilitator`. Record their edits as
+   they said them.
+4. Go back to asking questions once they're leading again.
+
+Proposals work best for things the expert would recognise but didn't think to say:
+rejection paths, the policy that reacts to an event, the read model behind a decision.
 
 ---
 
@@ -30,8 +56,8 @@ add_event(session_id, name)
 
 Naming rules:
 - PascalCase, past tense: `OrderPlaced`, `PaymentFailed`, `UserSuspended`
-- If you are unsure whether something qualifies as an event, add it anyway — you can
-  prune later
+- If you are unsure whether something qualifies as an event, add it anyway —
+  `remove_item` prunes it later
 - Do not rename what the expert says; use their exact words as the name
 
 Keep probing:
@@ -117,6 +143,10 @@ Phrase the name as: "Whenever [event], then [command]."
 
 Example: `"Whenever OrderPlaced, then ReserveInventory"`
 
+If the policy only applies in some cases ("whenever the assessment finishes *with no
+gaps*"), put that case in `condition` — e.g. `"the assessment found no gaps"` — rather
+than in the name. It becomes the policy scenario's `Given`.
+
 ### 2c — Read Models
 
 For each command, ask:
@@ -127,8 +157,11 @@ decision?"
 That is a **read model**. Call:
 
 ```
-add_read_model(session_id, name, actor_id)
+add_read_model(session_id, name, actor_ids)
 ```
+
+List every actor who reads it — shared views are common. If another reader turns up
+later, `update_read_model` replaces the list.
 
 ### 2d — More Hot Spots
 
@@ -191,6 +224,11 @@ with the expert before proceeding.
 
 Good aggregate names are singular nouns: `Order`, `Payment`, `Subscription`.
 
+Put the aggregate's invariant in `notes` as `Rule: …` — it is emitted as a Gherkin
+`Rule`. If the rule changes later, `update_aggregate` rewrites it. When a command or
+event turns up after clustering, add it with `assign_to_aggregate`; don't create a
+second aggregate with the same name.
+
 ### 3b — Bounded Contexts
 
 Ask:
@@ -205,7 +243,8 @@ Each such grouping is a **bounded context**. Call:
 propose_bounded_context(session_id, name, description, aggregate_ids)
 ```
 
-The server enforces: each aggregate belongs to exactly one bounded context.
+The server enforces: each aggregate belongs to exactly one bounded context. Add a
+late aggregate to an existing context with `assign_to_context`.
 
 ### 3c — Ubiquitous Language
 
@@ -220,6 +259,8 @@ Ask:
 - "What names should we *never* use for it?" → those become aliases
 - "How would you say it in a sentence describing the system's behaviour?" → that is
   the canonical phrasing
+- "Does another context use this term on purpose?" → pass those contexts as
+  `shared_with`, so the term isn't reported as leakage there
 
 ---
 
@@ -228,6 +269,8 @@ Ask:
 Summarise what was captured:
 - Events, commands, actors, policies, aggregates, bounded contexts, open hot spots
 - Read back each hot spot and ask if it can be resolved now
+- If you proposed anything, say how many notes are `source: facilitator` — they'll be
+  tagged `@proposed` in the specs
 
 Then ask: "Ready to emit the Gherkin specs?" If yes, run the `emit-gherkin-specs`
 playbook.

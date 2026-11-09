@@ -34,9 +34,13 @@ For each event, ask:
 "Is `[EventName]` the right name? If a new team member joined tomorrow, what would
 *they* call this?"
 
-If the expert prefers a different name, note it. (You cannot rename existing records
-in v1 — but you can define the term with the canonical phrasing they prefer, and the
-emitter will use that in step text.)
+If the expert prefers a different name, rename it in place with `update_event` or
+`update_command` — the ID and every link stay the same. Do the same for actors,
+policies, read models, aggregates and contexts with their `update_*` tools.
+
+Two names for the same thing (`OrderCreated` and `OrderPlaced`) are a duplicate, not a
+synonym: keep one, move its links over (`link_event`, `assign_to_aggregate`), and
+delete the other with `remove_item`.
 
 ---
 
@@ -71,7 +75,8 @@ define_term(
   definition,       // precise, expert-agreed definition (1–3 sentences)
   canonical_phrasing, // how it appears in a Gherkin step ("the order", "the customer")
   aliases,          // synonyms to flag during lint ["cart", "basket"]
-  context_id        // which bounded context owns this term (optional but recommended)
+  context_id,       // which bounded context owns this term (optional but recommended)
+  shared_with       // other contexts that use the term on purpose (optional)
 )
 ```
 
@@ -114,6 +119,11 @@ Ask: "Is [term] only meaningful inside [context], or is it shared across context
 Terms shared across contexts are a design smell — they may indicate a concept that
 needs its own bounded context, or they may represent a shared kernel that needs
 careful management.
+
+When the sharing is deliberate — a shared kernel, or a published language one context
+hands to another (the bug bar the product manager sets in Scoping, which cells rate
+against in Cell Judgment) — keep the term's home context and list the others in
+`shared_with`. `lint_steps` then stops reporting it as leakage there.
 
 ---
 

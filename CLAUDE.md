@@ -32,7 +32,8 @@ internal/
                 policies.feature per context, glossary.md, context-map.json
 
   playbooks/
-    playbooks.go  Embedded markdown registry; All() and Get(slug)
+    playbooks.go  Embedded markdown registry; All() and Get(slug). Every tool a
+                  playbook names must exist — internal/mcp/playbooks_test.go checks
     data/
       run-event-storming.md
       extract-ubiquitous-language.md

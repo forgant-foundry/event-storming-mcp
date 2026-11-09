@@ -172,9 +172,9 @@ Policies take an optional `condition`; read models take several readers in `acto
 
 | Slug | When to use |
 |---|---|
-| `run-event-storming` | Starting a new session from scratch |
+| `run-event-storming` | Starting a new session from scratch; includes a propose-and-confirm mode for experts who ask for suggestions |
 | `extract-ubiquitous-language` | Focused glossary pass after event discovery |
-| `emit-gherkin-specs` | Generating and reviewing the output triple |
+| `emit-gherkin-specs` | Generating and reviewing the outputs, with one batched phrasing pass |
 
 ## Session Storage
 
