@@ -203,26 +203,34 @@ func TestEmit_DeprecatedAggregate(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	s, _ := session.New("Test", "")
 	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "PeriodClosed"})
-	_, agg, _ := session.ClusterAggregate(s.ID, "", "", "", []string{evt.ID}, nil)
+	_, agg, _ := session.ClusterAggregate(s.ID, "Period", "", "", []string{evt.ID}, nil)
 	session.DeprecateAggregate(s.ID, agg.ID, "snapshots made this redundant")
-
 	loaded, _ := session.Load(s.ID)
-	outDir := t.TempDir()
-	sum, err := gherkin.Emit(loaded, outDir, gherkin.Options{})
+
+	// By default the aggregate is skipped, and listed in the context map.
+	sum, err := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(sum.FeatureFiles) != 0 || sum.ScenarioCount != 0 {
+		t.Errorf("deprecated aggregate should not emit a feature file: %+v", sum)
+	}
+	cm, _ := os.ReadFile(sum.ContextMapFile)
+	if !strings.Contains(string(cm), `"deprecated": true`) || !strings.Contains(string(cm), "snapshots made this redundant") {
+		t.Errorf("context map should list the deprecated aggregate and its reason:\n%s", cm)
+	}
 
+	// include_deprecated writes the tombstone.
+	sum, err = gherkin.Emit(loaded, t.TempDir(), gherkin.Options{IncludeDeprecated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sum.FeatureFiles) != 1 {
+		t.Fatalf("expected a tombstone feature file, got %v", sum.FeatureFiles)
+	}
 	data, _ := os.ReadFile(sum.FeatureFiles[0])
-	content := string(data)
-	if !strings.Contains(content, "@deprecated") {
-		t.Error("deprecated aggregate should have @deprecated tag")
-	}
-	if strings.Contains(content, "Scenario:") {
-		t.Error("deprecated aggregate should not emit scenarios")
-	}
-	if sum.ScenarioCount != 0 {
-		t.Errorf("scenario count should be 0 for deprecated aggregate, got %d", sum.ScenarioCount)
+	if !strings.Contains(string(data), "@deprecated") || strings.Contains(string(data), "Scenario:") {
+		t.Errorf("tombstone should be tagged @deprecated with no scenarios:\n%s", data)
 	}
 }
 
@@ -233,7 +241,7 @@ func TestEmit_ConditionalEvent(t *testing.T) {
 	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "ProcessPayment", ActorID: actor.ID})
 	_, evtOk, _ := session.AddEvent(s.ID, session.Event{Name: "PaymentProcessed", TriggerCommandID: cmd.ID})
 	_, evtFail, _ := session.AddEvent(s.ID, session.Event{Name: "PaymentDeclined", TriggerCommandID: cmd.ID})
-	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid")
+	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid", "")
 	session.ClusterAggregate(s.ID, "Payment", "", "", []string{evtOk.ID, evtFail.ID}, []string{cmd.ID})
 
 	loaded, _ := session.Load(s.ID)
@@ -261,7 +269,7 @@ func TestEmit_ConditionalEventWithPreconditions(t *testing.T) {
 	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "ProcessPayment", ActorID: actor.ID, Preconditions: []string{"an order is awaiting payment"}})
 	_, evtOk, _ := session.AddEvent(s.ID, session.Event{Name: "PaymentProcessed", TriggerCommandID: cmd.ID})
 	_, evtFail, _ := session.AddEvent(s.ID, session.Event{Name: "PaymentDeclined", TriggerCommandID: cmd.ID})
-	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid")
+	session.SetEventCondition(s.ID, evtFail.ID, "the payment method is invalid", "")
 	session.ClusterAggregate(s.ID, "Payment", "", "", []string{evtOk.ID, evtFail.ID}, []string{cmd.ID})
 
 	loaded, _ := session.Load(s.ID)
@@ -326,6 +334,11 @@ func TestStyleHelpers(t *testing.T) {
 		{func() string { return gherkin.WhenStep("RunAnalysis", "") }, "the system runs an analysis"},
 		// An object opening with a preposition takes no article.
 		{func() string { return gherkin.WhenStep("MergeToMain", "Director") }, "the director merges to main"},
+		// A leading -ed word is an adjective when the last word is the participle.
+		{func() string { return gherkin.ThenStep("MalformedKnowledgeRejected") }, "a malformed knowledge is rejected"},
+		// A leading "No" is the determiner.
+		{func() string { return gherkin.ThenStep("NoGuidanceFound") }, "no guidance is found"},
+		{func() string { return gherkin.ThenStep("NoRecommendationsPublished") }, "no recommendations are published"},
 	}
 	for _, tc := range cases {
 		got := tc.fn()
@@ -366,12 +379,12 @@ func TestEmit_ParsesAsGherkin(t *testing.T) {
 	_, rated, _ := session.AddEvent(s.ID, session.Event{Name: "ThreatRated", TriggerCommandID: rate.ID})
 	_, logged, _ := session.AddEvent(s.ID, session.Event{Name: "RatingLogged", TriggerCommandID: rate.ID})
 	_, above, _ := session.AddEvent(s.ID, session.Event{Name: "ThreatEscalated", TriggerCommandID: rate.ID})
-	session.SetEventCondition(s.ID, above.ID, "the threat is above the bug bar")
+	session.SetEventCondition(s.ID, above.ID, "the threat is above the bug bar", "")
 	_, start, _ := session.AddCommand(s.ID, session.Command{Name: "StartReview", ActorID: actor.ID, Source: session.SourceFacilitator})
 	_, fresh, _ := session.AddEvent(s.ID, session.Event{Name: "FreshReviewStarted", TriggerCommandID: start.ID})
 	_, cont, _ := session.AddEvent(s.ID, session.Event{Name: "ReviewResumed", TriggerCommandID: start.ID})
-	session.SetEventCondition(s.ID, fresh.ID, "no review exists")
-	session.SetEventCondition(s.ID, cont.ID, "a review exists")
+	session.SetEventCondition(s.ID, fresh.ID, "no review exists", "")
+	session.SetEventCondition(s.ID, cont.ID, "a review exists", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Threat Register", "Rule: every threat is rated against the bug bar", "",
 		[]string{rated.ID, logged.ID, above.ID, fresh.ID, cont.ID}, []string{rate.ID, start.ID})
 
@@ -386,7 +399,7 @@ func TestEmit_ParsesAsGherkin(t *testing.T) {
 	session.ProposeContext(s.ID, "Cell Judgment", "", []string{agg.ID, stub.ID, dep.ID}, nil)
 
 	loaded, _ := session.Load(s.ID)
-	sum, err := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{})
+	sum, err := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{IncludeDeprecated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,11 +410,11 @@ func TestEmit_ParsesAsGherkin(t *testing.T) {
 	if !strings.HasPrefix(content, "@context:cell-judgment @aggregate:threat-register\n") {
 		t.Errorf("tags should be slugged:\n%s", content)
 	}
-	if !strings.Contains(content, "  @proposed\n  Scenario: cell agent starts a review (no review exists)\n") {
-		t.Errorf("facilitator-sourced scenarios should be tagged @proposed:\n%s", content)
+	if !strings.Contains(content, "  @facilitator\n  Scenario: cell agent starts a review (no review exists)\n") {
+		t.Errorf("facilitator-sourced scenarios should be tagged @facilitator:\n%s", content)
 	}
-	if strings.Count(content, "@proposed") != 2 {
-		t.Errorf("only StartReview's two scenarios should be @proposed:\n%s", content)
+	if strings.Count(content, "@facilitator") != 2 {
+		t.Errorf("only StartReview's two scenarios should be @facilitator:\n%s", content)
 	}
 	if strings.Contains(content, "And  ") {
 		t.Errorf("And should be followed by a single space:\n%s", content)
@@ -416,13 +429,13 @@ func TestEmit_ConditionalOnlyWarnings(t *testing.T) {
 	_, branch, _ := session.AddCommand(s.ID, session.Command{Name: "StartEventStorming"})
 	_, empty, _ := session.AddEvent(s.ID, session.Event{Name: "GreenfieldStarted", TriggerCommandID: branch.ID})
 	_, existing, _ := session.AddEvent(s.ID, session.Event{Name: "BrownfieldStarted", TriggerCommandID: branch.ID})
-	session.SetEventCondition(s.ID, empty.ID, "the target repo has no code")
-	session.SetEventCondition(s.ID, existing.ID, "the target repo has existing code")
+	session.SetEventCondition(s.ID, empty.ID, "the target repo has no code", "")
+	session.SetEventCondition(s.ID, existing.ID, "the target repo has existing code", "")
 
 	// One conditional outcome and no happy path: a gap, warned.
 	_, gap, _ := session.AddCommand(s.ID, session.Command{Name: "ApproveScope"})
 	_, rejected, _ := session.AddEvent(s.ID, session.Event{Name: "ScopeRejected", TriggerCommandID: gap.ID})
-	session.SetEventCondition(s.ID, rejected.ID, "the scope is incomplete")
+	session.SetEventCondition(s.ID, rejected.ID, "the scope is incomplete", "")
 
 	session.ClusterAggregate(s.ID, "Scope", "", "",
 		[]string{empty.ID, existing.ID, rejected.ID}, []string{branch.ID, gap.ID})
@@ -452,7 +465,7 @@ func buildFactorySession(t *testing.T) *session.Session {
 	_, assess, _ := session.AddCommand(s.ID, session.Command{Name: "AssessCompleteness", ActorID: director.ID})
 	_, assessed, _ := session.AddEvent(s.ID, session.Event{Name: "CompletenessAssessed", TriggerCommandID: assess.ID})
 	_, gap, _ := session.AddEvent(s.ID, session.Event{Name: "CompletenessGapFound", TriggerCommandID: assess.ID})
-	session.SetEventCondition(s.ID, gap.ID, "a surface is not covered")
+	session.SetEventCondition(s.ID, gap.ID, "a surface is not covered", "")
 	_, convene, _ := session.AddCommand(s.ID, session.Command{Name: "ConveneCells", ActorID: director.ID})
 	_, convened, _ := session.AddEvent(s.ID, session.Event{Name: "CellsConvened", TriggerCommandID: convene.ID})
 	_, declare, _ := session.AddCommand(s.ID, session.Command{Name: "DeclareArrival", ActorID: director.ID,
@@ -507,7 +520,7 @@ func TestEmit_PoliciesHotSpotsAndPhrasing(t *testing.T) {
 	for _, want := range []string{
 		"@context:cell-judgment\nFeature: Cell Judgment policies\n",
 		"  @policy:convene-on-gap\n  Scenario: Convene on gap\n    When a completeness gap is found\n    Then the director convenes cells\n",
-		"  @policy:declare-when-complete @proposed\n",
+		"  @policy:declare-when-complete @facilitator\n",
 		"    Given the assessment found no gaps\n    When a completeness is assessed\n    Then the director declares that the factory has arrived\n",
 	} {
 		if !strings.Contains(string(policies), want) {
@@ -600,5 +613,146 @@ func TestEmit_GlossarySharedWith(t *testing.T) {
 	data, _ := os.ReadFile(sum.GlossaryFile)
 	if !strings.Contains(string(data), "| Bug Bar | The severity threshold. | the bug bar |  | Cell Judgment |") {
 		t.Errorf("glossary should list shared contexts:\n%s", data)
+	}
+}
+
+func TestPhraser_UsesCanonicalPhrasing(t *testing.T) {
+	ph := gherkin.NewPhraser([]session.GlossaryTerm{
+		{Term: "Cell Knowledge", CanonicalPhrasing: "the cell knowledge"},
+		{Term: "Coverage", CanonicalPhrasing: "the coverage report"},
+		{Term: "Unphrased"},
+	})
+	cases := []struct{ got, want string }{
+		{ph.When("GetCellKnowledge", "Cell Agent"), "the cell agent gets the cell knowledge"},
+		{ph.Then("CellKnowledgeIndexed"), "the cell knowledge is indexed"},
+		{ph.When("ReportCoverage", ""), "the system reports the coverage report"},
+		{ph.Title("GetCellKnowledge", "Cell Agent"), "cell agent gets the cell knowledge"},
+		// No term matches the whole noun phrase: fall back to the heuristic.
+		{ph.Then("CellKnowledgeGapFound"), "a cell knowledge gap is found"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
+// buildKnowledgeSession has a command with two preconditions and a rejection
+// event whose condition negates one of them.
+func buildKnowledgeSession(t *testing.T) (*session.Session, *session.Command, *session.Event) {
+	t.Helper()
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Knowledge", "")
+	_, actor, _ := session.AddActor(s.ID, "Knowledge Repo", session.ActorTypeExternalSystem, "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "CheckKnowledgeFile", ActorID: actor.ID,
+		Preconditions: []string{"the knowledge file follows the schema", "Repo exists"}})
+	_, ok, _ := session.AddEvent(s.ID, session.Event{Name: "KnowledgeFileAccepted", TriggerCommandID: cmd.ID})
+	_, bad, _ := session.AddEvent(s.ID, session.Event{Name: "MalformedKnowledgeRejected", TriggerCommandID: cmd.ID})
+	if _, _, err := session.SetEventCondition(s.ID, bad.ID, "the knowledge file doesn't follow the schema",
+		"the knowledge file follows the schema"); err != nil {
+		t.Fatal(err)
+	}
+	_, agg, _ := session.ClusterAggregate(s.ID, "Knowledge File", "", "", []string{ok.ID, bad.ID}, []string{cmd.ID})
+	session.ProposeContext(s.ID, "Knowledge", "", []string{agg.ID}, nil)
+	loaded, _ := session.Load(s.ID)
+	return loaded, cmd, bad
+}
+
+func TestEmit_NegatedPreconditionAndGivens(t *testing.T) {
+	s, _, _ := buildKnowledgeSession(t)
+	sum, err := gherkin.Emit(s, t.TempDir(), gherkin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseFeatures(t, sum)
+	data, _ := os.ReadFile(sum.FeatureFiles[0])
+	content := string(data)
+
+	happy := "    Given the knowledge file follows the schema\n    And repo exists\n    When the knowledge repo checks a knowledge file\n"
+	if !strings.Contains(content, happy) {
+		t.Errorf("happy path should use Given then And, lower-casing the first word:\n%s", content)
+	}
+	rejection := "    Given repo exists\n    And the knowledge file doesn't follow the schema\n    When"
+	if !strings.Contains(content, rejection) {
+		t.Errorf("rejection scenario should drop the negated precondition:\n%s", content)
+	}
+	if strings.Count(content, "the knowledge file follows the schema") != 1 {
+		t.Errorf("the negated precondition should appear only in the happy path:\n%s", content)
+	}
+}
+
+func TestEmit_StaleNegatesWarns(t *testing.T) {
+	s, cmd, _ := buildKnowledgeSession(t)
+	newPre := []string{"the knowledge file matches the schema", "Repo exists"}
+	session.UpdateCommand(s.ID, cmd.ID, session.CommandPatch{Preconditions: &newPre})
+	loaded, _ := session.Load(s.ID)
+	sum, err := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sum.Warnings) != 1 || !strings.Contains(sum.Warnings[0], "no longer a precondition") {
+		t.Errorf("expected a stale-negates warning, got %v", sum.Warnings)
+	}
+}
+
+func TestEmit_CrossAggregateAndStalePolicyWarnings(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	_, record, _ := session.AddCommand(s.ID, session.Command{Name: "RecordTransaction"})
+	_, recorded, _ := session.AddEvent(s.ID, session.Event{Name: "TransactionRecorded", TriggerCommandID: record.ID})
+	_, overdrawn, _ := session.AddEvent(s.ID, session.Event{Name: "AccountOverdrafted", TriggerCommandID: record.ID})
+	session.ClusterAggregate(s.ID, "Transaction", "", "", []string{recorded.ID}, []string{record.ID})
+	session.ClusterAggregate(s.ID, "Account", "", "", []string{overdrawn.ID}, nil)
+	session.AddPolicy(s.ID, "Whenever TransferInitiated, then RecordTransaction", "", recorded.ID, record.ID, "", "", "")
+
+	loaded, _ := session.Load(s.ID)
+	sum, err := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(sum.Warnings, "\n")
+	if !strings.Contains(all, `event "AccountOverdrafted" is in aggregate "Account" but its trigger command "RecordTransaction" is in "Transaction"`) {
+		t.Errorf("expected a cross-aggregate warning:\n%s", all)
+	}
+	if !strings.Contains(all, `mentions "TransferInitiated"`) || strings.Contains(all, `mentions "RecordTransaction"`) {
+		t.Errorf("expected a stale-name warning for TransferInitiated only:\n%s", all)
+	}
+}
+
+func TestEmit_LintsEmittedSteps(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Shop", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "PlaceOrder", Preconditions: []string{"the basket is not empty"}})
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "OrderPlaced", TriggerCommandID: cmd.ID})
+	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", []string{evt.ID}, []string{cmd.ID})
+	_, ctx, _ := session.ProposeContext(s.ID, "Ordering", "", []string{agg.ID}, nil)
+	session.DefineTerm(s.ID, "Order", "A purchase request.", "the order", ctx.ID, []string{"basket"}, nil)
+
+	loaded, _ := session.Load(s.ID)
+	sum, err := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sum.Lint) != 1 || sum.Lint[0].Type != "alias" || sum.Lint[0].Step != "Given the basket is not empty" {
+		t.Errorf("expected one alias finding on the Given, got %+v", sum.Lint)
+	}
+	// The glossary's canonical phrasing replaces the derived article.
+	data, _ := os.ReadFile(sum.FeatureFiles[0])
+	if !strings.Contains(string(data), "When the system places the order\n    Then the order is placed\n") {
+		t.Errorf("derived steps should use the canonical phrasing:\n%s", data)
+	}
+}
+
+func TestEmit_LowerFirstKeepsAcronyms(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Test", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "SyncLedger", Preconditions: []string{"API is reachable", "Ledger exists"}})
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "LedgerSynced", TriggerCommandID: cmd.ID})
+	session.ClusterAggregate(s.ID, "Ledger", "", "", []string{evt.ID}, []string{cmd.ID})
+	loaded, _ := session.Load(s.ID)
+	sum, _ := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{})
+	data, _ := os.ReadFile(sum.FeatureFiles[0])
+	if !strings.Contains(string(data), "    Given API is reachable\n    And ledger exists\n") {
+		t.Errorf("acronyms should keep their case; capitalised words are lowered:\n%s", data)
 	}
 }

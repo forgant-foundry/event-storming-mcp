@@ -18,8 +18,8 @@ it was attached to. A sticky that turns out wrong is cheap; a stalled conversati
 
 **Record where each note came from.** Pass `source: expert` for what the expert said
 and `source: facilitator` for anything you proposed that they confirmed. It costs the
-expert nothing, and the emitter tags facilitator-sourced scenarios `@proposed` for a
-second look.
+expert nothing, and the emitter tags facilitator-sourced scenarios `@facilitator` so
+reviewers can see where they came from. Don't change `source` after the fact.
 
 ## Propose-and-Confirm (only when the expert asks)
 
@@ -116,7 +116,11 @@ For each rejection path identified:
    `AccountClosureRefused`, `DuplicateEntryDetected`)
 2. Call `add_event` with `trigger_command_id` set to this command
 3. Call `set_event_condition` with the negated precondition text
-   (e.g. `"the account is closed"`, `"the entry does not exist"`)
+   (e.g. `"the account is closed"`, `"the entry does not exist"`), and pass the
+   precondition it contradicts, word for word, as `negates` (e.g. `"the account is
+   open"`). The emitter leaves that precondition out of the rejection scenario;
+   without it the scenario says both "the account is open" and "the account is
+   closed", and can never pass.
 
 The emitter will produce a separate `Scenario` block per rejection path, with
 the condition as an additional `Given` step. This turns invariants that surfaced
@@ -270,7 +274,7 @@ Summarise what was captured:
 - Events, commands, actors, policies, aggregates, bounded contexts, open hot spots
 - Read back each hot spot and ask if it can be resolved now
 - If you proposed anything, say how many notes are `source: facilitator` — they'll be
-  tagged `@proposed` in the specs
+  tagged `@facilitator` in the specs
 
 Then ask: "Ready to emit the Gherkin specs?" If yes, run the `emit-gherkin-specs`
 playbook.

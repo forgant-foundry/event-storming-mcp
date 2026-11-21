@@ -213,14 +213,32 @@ func AddActor(sessionID, name string, actorType ActorType, notes string) (*Sessi
 // SetEventCondition marks an event as conditionally emitted with the given condition
 // text. The emitter will place it in a separate Scenario block rather than the
 // happy-path scenario for its command.
-func SetEventCondition(sessionID, eventID, condition string) (*Session, *Event, error) {
+//
+// negates, when set, is the trigger command's precondition that the condition
+// contradicts ("the knowledge file follows the schema" for "…doesn't follow
+// the schema"). The emitter leaves it out of this event's scenario, which
+// could otherwise never be satisfied. An empty condition clears both.
+func SetEventCondition(sessionID, eventID, condition, negates string) (*Session, *Event, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
+	if condition == "" {
+		negates = ""
+	}
 	for i := range s.Events {
 		if s.Events[i].ID == eventID {
+			if negates != "" {
+				ci := slices.IndexFunc(s.Commands, func(c Command) bool { return c.ID == s.Events[i].TriggerCommandID })
+				if ci < 0 {
+					return nil, nil, fmt.Errorf("event %s has no trigger command, so there is no precondition to negate", eventID)
+				}
+				if !slices.Contains(s.Commands[ci].Preconditions, negates) {
+					return nil, nil, fmt.Errorf("negates must be one of command %s's preconditions, word for word: %q", s.Commands[ci].Name, s.Commands[ci].Preconditions)
+				}
+			}
 			s.Events[i].Condition = condition
+			s.Events[i].Negates = negates
 			if err := Save(s); err != nil {
 				return nil, nil, err
 			}

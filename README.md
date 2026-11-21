@@ -121,7 +121,7 @@ output files.
 |---|---|
 | `link_event` | Set the triggering command on an existing event (avoids duplicates) |
 | `remove_event` | Delete an event and detach it from its aggregate and policies |
-| `set_event_condition` | Mark an event as conditional (e.g. a rejection); emitted as its own scenario |
+| `set_event_condition` | Mark an event as conditional (e.g. a rejection); emitted as its own scenario. `negates` names the precondition it contradicts, which that scenario then leaves out |
 | `resolve_hotspot` | Close a hot spot with the decision that resolved it |
 | `deprecate_aggregate` | Mark an aggregate obsolete; its feature file is tagged `@deprecated` with no scenarios |
 
@@ -135,7 +135,7 @@ output files.
 
 Events and commands take an optional `phrasing` used verbatim in the emitted steps.
 Capture and update tools take an optional `source` — `expert`, `facilitator` or
-`imported` — and scenarios built from facilitator-sourced notes are tagged `@proposed`.
+`imported` — and scenarios built from facilitator-sourced notes are tagged `@facilitator`.
 Policies take an optional `condition`; read models take several readers in `actor_ids`.
 
 ### Glossary
@@ -153,7 +153,7 @@ Policies take an optional `condition`; read models take several readers in `acto
 ### Emission
 | Tool | Description |
 |---|---|
-| `emit_gherkin` | Write .feature files, glossary.md, and context-map.json; `only` limits which |
+| `emit_gherkin` | Write .feature files, glossary.md, and context-map.json; `only` limits which. Reports warnings and glossary lint for every emitted step; skips deprecated aggregates unless `include_deprecated` |
 
 ### Portability
 | Tool | Description |

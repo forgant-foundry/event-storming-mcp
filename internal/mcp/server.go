@@ -367,6 +367,9 @@ func setEventConditionTool() libmcp.Tool {
 			libmcp.Required(),
 			libmcp.Description("The condition under which this event is emitted (e.g. 'the payment method is invalid'). Pass an empty string to clear."),
 		),
+		libmcp.WithString("negates",
+			libmcp.Description("The trigger command's precondition this condition contradicts, word for word (e.g. 'the payment method is valid'). It is left out of this event's scenario, which could otherwise never pass. Set it for every rejection path."),
+		),
 	)
 }
 
@@ -383,7 +386,7 @@ func handleSetEventCondition(_ context.Context, req libmcp.CallToolRequest) (*li
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	_, e, err := session.SetEventCondition(sessionID, eventID, condition)
+	_, e, err := session.SetEventCondition(sessionID, eventID, condition, req.GetString("negates", ""))
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
@@ -640,7 +643,7 @@ func handleProposeContext(_ context.Context, req libmcp.CallToolRequest) (*libmc
 
 func emitGherkinTool() libmcp.Tool {
 	return libmcp.NewTool("emit_gherkin",
-		libmcp.WithDescription("Generate the outputs for this session: .feature files (one per aggregate, plus policies.feature per bounded context, with open hot spots as comments), glossary.md, and context-map.json (also lists actors, policies, read models and hot spots). Returns a summary of what was written, the open hot spot count, and any warnings."),
+		libmcp.WithDescription("Generate the outputs for this session: .feature files (one per aggregate, plus policies.feature per bounded context, with open hot spots as comments), glossary.md, and context-map.json (also lists actors, policies, read models and hot spots). Returns a summary of what was written, the open hot spot count, any warnings, and lint: glossary violations found in the emitted steps. Deprecated aggregates are skipped unless include_deprecated is set."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("output_dir",
 			libmcp.Required(),
@@ -648,6 +651,9 @@ func emitGherkinTool() libmcp.Tool {
 		),
 		libmcp.WithArray("only", libmcp.WithStringItems(libmcp.Enum(gherkin.Outputs...)),
 			libmcp.Description("Write only these outputs: features, glossary, context_map. Default is all. Use ['glossary', 'context_map'] to refresh them without overwriting hand-edited .feature files."),
+		),
+		libmcp.WithBoolean("include_deprecated",
+			libmcp.Description("Also write an empty @deprecated feature file for each deprecated aggregate (default false; they're always listed in context-map.json)"),
 		),
 	)
 }
@@ -665,7 +671,10 @@ func handleEmitGherkin(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	sum, err := gherkin.Emit(s, outDir, gherkin.Options{Only: req.GetStringSlice("only", nil)})
+	sum, err := gherkin.Emit(s, outDir, gherkin.Options{
+		Only:              req.GetStringSlice("only", nil),
+		IncludeDeprecated: req.GetBool("include_deprecated", false),
+	})
 	if err != nil {
 		return libmcp.NewToolResultError(fmt.Sprintf("emit failed: %v", err)), nil
 	}

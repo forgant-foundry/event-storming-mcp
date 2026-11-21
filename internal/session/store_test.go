@@ -139,7 +139,7 @@ func TestSetEventCondition(t *testing.T) {
 	s, _ := session.New("Test", "")
 	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "PaymentDeclined"})
 
-	_, updated, err := session.SetEventCondition(s.ID, evt.ID, "the payment method is invalid")
+	_, updated, err := session.SetEventCondition(s.ID, evt.ID, "the payment method is invalid", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSetEventCondition(t *testing.T) {
 	}
 
 	// Clear condition
-	_, cleared, _ := session.SetEventCondition(s.ID, evt.ID, "")
+	_, cleared, _ := session.SetEventCondition(s.ID, evt.ID, "", "")
 	if cleared.Condition != "" {
 		t.Error("condition not cleared")
 	}
@@ -566,5 +566,31 @@ func TestLoadReconcilesMembership(t *testing.T) {
 	}
 	if !slices.Equal(loaded.BoundedContexts[0].GlossaryTermIDs, []string{term.ID}) {
 		t.Errorf("context glossary_term_ids: got %v, want [%s]", loaded.BoundedContexts[0].GlossaryTermIDs, term.ID)
+	}
+}
+
+func TestSetEventConditionNegates(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Payments", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "ProcessPayment", Preconditions: []string{"the payment method is valid"}})
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "PaymentDeclined", TriggerCommandID: cmd.ID})
+	_, loose, _ := session.AddEvent(s.ID, session.Event{Name: "PaymentNoticed"})
+
+	if _, _, err := session.SetEventCondition(s.ID, evt.ID, "the payment method is invalid", "the payment method is OK"); err == nil {
+		t.Error("expected error when negates isn't one of the command's preconditions")
+	}
+	if _, _, err := session.SetEventCondition(s.ID, loose.ID, "x", "y"); err == nil {
+		t.Error("expected error when the event has no trigger command")
+	}
+	_, got, err := session.SetEventCondition(s.ID, evt.ID, "the payment method is invalid", "the payment method is valid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Negates != "the payment method is valid" {
+		t.Errorf("negates: got %q", got.Negates)
+	}
+	_, got, _ = session.SetEventCondition(s.ID, evt.ID, "", "")
+	if got.Condition != "" || got.Negates != "" {
+		t.Errorf("clearing the condition should clear negates: %+v", got)
 	}
 }

@@ -98,13 +98,15 @@ When step including the actor, and the scenario title).
 - `add_read_model(session_id, name, actor_ids?, context_id?, notes?, source?)` — `actor_id` still accepted
 
 `source` is expert | facilitator | imported. Facilitator-sourced commands/events emit
-their scenarios tagged `@proposed`.
+their scenarios tagged `@facilitator` (provenance — the expert confirmed them; it
+doesn't mean unconfirmed).
 - `add_hot_spot(session_id, question, context_id?)`
 
 ### Refinement
 - `link_event(session_id, event_id, command_id)` — set trigger_command_id in place (no duplicate)
 - `remove_event(session_id, event_id)` — same as `remove_item(kind=event)`
-- `set_event_condition(session_id, event_id, condition)` — conditional/rejection event
+- `set_event_condition(session_id, event_id, condition, negates?)` — conditional/rejection
+  event; `negates` is the trigger command's precondition it contradicts, word for word
 - `resolve_hotspot(session_id, hotspot_id, resolution)`
 - `deprecate_aggregate(session_id, aggregate_id, reason?)`
 
@@ -133,9 +135,9 @@ array replaces the whole list.
 - `propose_bounded_context(session_id, name, description?, aggregate_ids?, glossary_term_ids?)` — enforces one-context-per-aggregate
 
 ### Emission
-- `emit_gherkin(session_id, output_dir, only?)` → Summary (feature files, glossary.md,
-  context-map.json, scenario_count, open_hot_spots, warnings); `only` is any of
-  features | glossary | context_map
+- `emit_gherkin(session_id, output_dir, only?, include_deprecated?)` → Summary (feature
+  files, glossary.md, context-map.json, scenario_count, open_hot_spots, warnings, lint);
+  `only` is any of features | glossary | context_map
 
 ### Portability
 - `export_session(session_id, path)` — write session JSON verbatim
@@ -190,7 +192,22 @@ missing either end warns.
 Open hot spots are written as `# Open question (id): …` comments at the top of every
 feature file in their context. context-map.json also lists actors, and per context
 the policies, read models (with readers) and hot spots (open and resolved).
-Scenarios from facilitator-sourced commands, events or policies are tagged `@proposed`.
+Scenarios from facilitator-sourced commands, events or policies are tagged `@facilitator`.
+
+Preconditions are written as one `Given` then `And`s, with the first word lower-cased
+unless it's an acronym. A conditional event's `Negates` (set via
+`set_event_condition(negates)`) names the precondition its condition contradicts;
+that precondition is dropped from its scenario, and a stale `Negates` warns.
+
+Derived noun phrases that exactly match a glossary term (one in the feature's context,
+shared with it, or context-free) use the term's canonical phrasing — see `Phraser` in
+style.go. Every emitted step is run through `LintStep`; violations go in
+`Summary.Lint`, not `Warnings`.
+
+Also warned: an event whose aggregate differs from its trigger command's aggregate, and
+a policy name mentioning a PascalCase name that's no longer an event or command.
+Deprecated aggregates are skipped unless `Options.IncludeDeprecated`; context-map.json
+always lists them with `deprecated` and the reason.
 
 Events with a `Condition` are excluded from the happy-path scenario and each gets its
 own scenario: preconditions as `Given`, the condition as `And` (or `Given` when there
@@ -201,7 +218,8 @@ A command with exactly one conditional event and no unconditional one warns (lik
 gap); two or more conditional events with none unconditional is a branch and doesn't.
 Tags are `@context:<slug>` and `@aggregate:<slug>` — Gherkin tags can't contain
 whitespace. `emit_test.go` runs every emitted file through the cucumber Gherkin parser.
-Deprecated aggregates are tagged `@deprecated` and emit no scenarios.
+With `include_deprecated`, deprecated aggregates are tagged `@deprecated` and emit no
+scenarios.
 Aggregates with no commands produce a stub scenario with `# TODO` comments.
 
 ## Adding a New Tool

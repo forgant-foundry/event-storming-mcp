@@ -29,6 +29,7 @@ type Event struct {
 	ContextID        string    `json:"context_id,omitempty"`
 	Notes            string    `json:"notes,omitempty"`
 	Condition        string    `json:"condition,omitempty"` // non-empty = conditionally emitted; emitted as a separate Scenario with this as an additional Given
+	Negates          string    `json:"negates,omitempty"`   // the trigger command's precondition that Condition negates; dropped from this event's scenario
 	Phrasing         string    `json:"phrasing,omitempty"`  // Then step text used verbatim instead of one derived from Name
 	Source           Source    `json:"source,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`

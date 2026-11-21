@@ -3,6 +3,8 @@ package gherkin
 import (
 	"strings"
 	"unicode"
+
+	"github.com/forgant-foundry/event-storming-mcp/internal/session"
 )
 
 // camelWords splits PascalCase into lowercase words.
@@ -44,9 +46,57 @@ func Slug(s string) string {
 	return strings.Join(parts, "-")
 }
 
+// Phraser derives step text from event and command names. Its glossary maps
+// a term's words to its canonical phrasing, so a derived noun phrase that
+// names a glossary term uses the agreed wording ("the cell knowledge") rather
+// than a guessed article ("a cell knowledge"). The zero value has no glossary.
+type Phraser struct {
+	canonical map[string]string
+}
+
+// NewPhraser builds a Phraser from glossary terms. Terms without a canonical
+// phrasing are ignored.
+func NewPhraser(terms []session.GlossaryTerm) Phraser {
+	p := Phraser{canonical: make(map[string]string)}
+	for _, t := range terms {
+		if t.CanonicalPhrasing == "" {
+			continue
+		}
+		p.canonical[strings.Join(nameWords(t.Term), " ")] = t.CanonicalPhrasing
+	}
+	return p
+}
+
+// nameWords splits a name written either as PascalCase or as separate words.
+func nameWords(name string) []string {
+	var words []string
+	for _, w := range strings.FieldsFunc(name, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		words = append(words, camelWords(w)...)
+	}
+	return words
+}
+
 // WhenStep formats a command name and actor as a declarative When clause.
 // ("SendMessage", "User") → "the user sends a message"
 func WhenStep(commandName, actorName string) string {
+	return Phraser{}.When(commandName, actorName)
+}
+
+// ThenStep formats an event name as a declarative Then clause.
+// "MessageSent" → "a message is sent"
+func ThenStep(eventName string) string {
+	return Phraser{}.Then(eventName)
+}
+
+// ScenarioTitle produces a human-readable scenario title from a command name and actor.
+// ("SendMessage", "User") → "user sends a message"
+func ScenarioTitle(commandName, actorName string) string {
+	return Phraser{}.Title(commandName, actorName)
+}
+
+func (p Phraser) When(commandName, actorName string) string {
 	words := camelWords(commandName)
 	actor := "the system"
 	if actorName != "" {
@@ -58,15 +108,25 @@ func WhenStep(commandName, actorName string) string {
 	if len(words) == 1 {
 		return actor + " " + conjugateVerb(words[0])
 	}
-	verb := conjugateVerb(words[0])
-	obj := nounPhrase(words[1:])
-	return actor + " " + verb + " " + obj
+	return actor + " " + conjugateVerb(words[0]) + " " + p.nounPhrase(words[1:])
 }
 
-// ThenStep formats an event name as a declarative Then clause.
-// "MessageSent" → "a message is sent"
-// "ChannelCreated" → "a channel is created"
-func ThenStep(eventName string) string {
+func (p Phraser) Title(commandName, actorName string) string {
+	words := camelWords(commandName)
+	prefix := ""
+	if actorName != "" {
+		prefix = strings.ToLower(actorName) + " "
+	}
+	if len(words) == 0 {
+		return prefix + "acts"
+	}
+	if len(words) == 1 {
+		return prefix + words[0]
+	}
+	return prefix + conjugateVerb(words[0]) + " " + p.nounPhrase(words[1:])
+}
+
+func (p Phraser) Then(eventName string) string {
 	words := camelWords(eventName)
 	if len(words) == 0 {
 		return "an event occurs"
@@ -76,14 +136,16 @@ func ThenStep(eventName string) string {
 	}
 	// The participle is usually the last word ("OrderPlaced"). When the name
 	// ends in a prepositional phrase instead ("ScopePassedToFactory"), split at
-	// the first -ed word: "a scope is passed to factory".
-	// A name that starts with its participle ("MergedToMain") has no subject
-	// to put before "is", so it's used as is: "merged to main".
-	if isRegularParticiple(words[0]) {
-		return strings.Join(words, " ")
-	}
+	// the first participle: "a scope is passed to factory".
 	split := len(words) - 1
 	if !isParticiple(words[split]) {
+		// A name that opens with its participle ("MergedToMain") has no
+		// subject to put before "is", so it's used as is: "merged to main".
+		// When the last word is a participle, a leading -ed word is an
+		// adjective instead ("MalformedKnowledgeRejected").
+		if isRegularParticiple(words[0]) {
+			return strings.Join(words, " ")
+		}
 		for i := 1; i < len(words)-1; i++ {
 			if isParticiple(words[i]) {
 				split = i
@@ -92,11 +154,20 @@ func ThenStep(eventName string) string {
 		}
 	}
 	nounWords := words[:split]
+	// "NoGuidanceFound" → "no guidance is found": "no" is the determiner.
+	negated := nounWords[0] == "no" && len(nounWords) > 1
+	if negated {
+		nounWords = nounWords[1:]
+	}
 	verb := " is "
 	if isPlural(nounWords[len(nounWords)-1]) {
 		verb = " are "
 	}
-	return nounPhrase(nounWords) + verb + strings.Join(words[split:], " ")
+	noun := p.nounPhrase(nounWords)
+	if negated {
+		noun = "no " + strings.Join(nounWords, " ")
+	}
+	return noun + verb + strings.Join(words[split:], " ")
 }
 
 // prepositions that can open a command's object ("MergeToMain" → "merges to
@@ -134,28 +205,14 @@ func isPlural(w string) bool {
 		!strings.HasSuffix(w, "ss") && !strings.HasSuffix(w, "us") && !strings.HasSuffix(w, "is")
 }
 
-// ScenarioTitle produces a human-readable scenario title from a command name and actor.
-// ("SendMessage", "User") → "user sends a message"
-func ScenarioTitle(commandName, actorName string) string {
-	words := camelWords(commandName)
-	prefix := ""
-	if actorName != "" {
-		prefix = strings.ToLower(actorName) + " "
-	}
-	if len(words) == 0 {
-		return prefix + "acts"
-	}
-	if len(words) == 1 {
-		return prefix + words[0]
-	}
-	return prefix + conjugateVerb(words[0]) + " " + nounPhrase(words[1:])
-}
-
-func nounPhrase(words []string) string {
+func (p Phraser) nounPhrase(words []string) string {
 	if len(words) == 0 {
 		return ""
 	}
 	noun := strings.Join(words, " ")
+	if c, ok := p.canonical[noun]; ok {
+		return c
+	}
 	if isPlural(words[len(words)-1]) || prepositions[words[0]] {
 		return noun
 	}

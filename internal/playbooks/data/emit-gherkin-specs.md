@@ -68,7 +68,12 @@ Review the summary:
 - `scenario_count` — scenarios written, including policy scenarios
 - `feature_files` — full paths of every file written
 - `open_hot_spots` — unresolved questions; they're in the feature files as comments
-- `warnings` — gaps to resolve in Step 5
+- `warnings` — gaps to resolve in Step 6
+- `lint` — glossary violations in the emitted steps, Givens included, per file; fix
+  them in Step 5
+
+Deprecated aggregates are skipped (they're listed in `context-map.json`); pass
+`include_deprecated: true` only if the consumer wants their empty feature files.
 
 ---
 
@@ -77,6 +82,11 @@ Review the summary:
 Step text is derived from the event and command names, and some names don't turn
 into good English — mass nouns ("a completeness is assessed"), multi-clause names,
 names where the verb isn't where the emitter expects it.
+
+When a derived noun phrase is exactly a glossary term, the emitter already uses the
+term's canonical phrasing ("the cell knowledge", not "a cell knowledge"). So defining
+the term often fixes a whole family of steps at once — prefer that to a phrasing per
+step when the noun recurs.
 
 Read every When and Then step yourself first. Collect the ones that read badly into
 **one table** — current step, your proposed rewrite — and ask the expert to approve or
@@ -109,9 +119,10 @@ Check:
 5. **Tag correctness** — `@context:X` and `@aggregate:Y` match the design
 
 Give extra attention to:
-- **`@proposed` scenarios** — built from notes the facilitator proposed. Ask the expert
-  to confirm each one explicitly; when they do, `update_command` / `update_event` with
-  `source: expert` clears the tag on the next emit.
+- **`@facilitator` scenarios** — built from notes you proposed and the expert
+  confirmed in the table. The tag records where they came from; leave `source` as it
+  is. Read them once more as a set, since the expert approved them as rows, not as
+  scenarios.
 - **`policies.feature`** — for each policy ask "Does [command] really happen every time
   [event] happens? Is there a case where it shouldn't?" A case where it shouldn't is a
   `condition` (`update_policy`).
@@ -125,7 +136,8 @@ Wrong notes, aggregates or rules are fixed in the session, not in the file: the
 
 ## Step 5 — Lint Step Text
 
-For any step that looks wrong or uses informal language, call:
+The emit summary's `lint` already lists every glossary violation in the emitted steps.
+For a rewrite you're considering, or any other text, call:
 
 ```
 lint_steps(session_id, "the step text here", context_id)
@@ -133,7 +145,8 @@ lint_steps(session_id, "the step text here", context_id)
 
 **Alias violation** (`type: "alias"`): An alias is used instead of the canonical
 phrasing. Fix: set the step's `phrasing` using the `use_instead` value from the lint
-result, or rename the event/command.
+result, or rename the event/command. In a `Given`, reword the precondition with
+`update_command(preconditions)` — and re-set any `negates` that quoted it.
 
 **Cross-context leakage** (`type: "cross_context"`): A term from a different bounded
 context appears in the step. Ask the expert whether the contexts share it on purpose:
@@ -187,6 +200,23 @@ clustering step was skipped. Resolve with the expert.
 Fix with `update_policy(trigger_event_id, resulting_command_id)`, or remove it if it
 was really a note about something else.
 
+### "policy X mentions Y, which is no longer an event or command name"
+
+An event or command was renamed and the policy's name — its scenario title — wasn't.
+Fix with `update_policy(name)`.
+
+### "event X is in aggregate A but its trigger command Y is in B"
+
+One command is changing two aggregates, which breaks the consistency boundary an
+aggregate exists to draw. Ask the expert what in A reacts to Y's outcome. Usually it's
+a policy: re-link X to a command in A (`link_event`), and add a policy from Y's event
+in B to that command.
+
+### "event X negates Y, which is no longer a precondition of Z"
+
+The precondition was reworded after the condition was set. Call `set_event_condition`
+again with the current wording in `negates`.
+
 ---
 
 ## Step 7 — Review context-map.json
@@ -228,10 +258,10 @@ compare.
 
 ## Done When
 
-- `emit_gherkin` produces zero warnings
+- `emit_gherkin` produces zero warnings and an empty `lint`
 - The expert has approved the phrasing table, and no step reads awkwardly
-- Every `@proposed` scenario has been confirmed or removed
-- `lint_steps` returns clean for a sample from each bounded context
+- Every rejection scenario's condition `negates` the precondition it contradicts
+- The `@facilitator` scenarios have been read once more as a set
 - The domain expert has read and approved at least one scenario per aggregate and
   every policy scenario
 - Every open hot spot has been read out, and the expert has either resolved it or

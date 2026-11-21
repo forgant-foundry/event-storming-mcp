@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/forgant-foundry/event-storming-mcp/internal/session"
 )
@@ -28,6 +30,19 @@ type Options struct {
 	// regenerate glossary.md or context-map.json without overwriting
 	// hand-edited .feature files.
 	Only []string
+	// IncludeDeprecated writes a tombstone feature file (tagged @deprecated, no
+	// scenarios) for each deprecated aggregate. By default they are skipped and
+	// only listed in context-map.json, so a consumer that binds every feature
+	// file doesn't receive empty ones.
+	IncludeDeprecated bool
+}
+
+// LintFinding is a glossary problem in an emitted step.
+type LintFinding struct {
+	File    string `json:"file"`
+	Step    string `json:"step"`
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 // Summary is returned by Emit and describes what was written.
@@ -38,11 +53,15 @@ type Summary struct {
 	ScenarioCount  int      `json:"scenario_count"`
 	OpenHotSpots   int      `json:"open_hot_spots"`
 	Warnings       []string `json:"warnings,omitempty"`
+	// Lint lists glossary violations in the emitted steps (aliases and
+	// cross-context terms), Givens included.
+	Lint []LintFinding `json:"lint,omitempty"`
 }
 
 // emitter holds the lookup tables shared by every output.
 type emitter struct {
 	s             *session.Session
+	opts          Options
 	contextByID   map[string]session.BoundedContext
 	actorByID     map[string]session.Actor
 	eventByID     map[string]session.Event
@@ -111,6 +130,7 @@ func Emit(s *session.Session, outDir string, opts Options) (*Summary, error) {
 	}
 
 	e := newEmitter(s)
+	e.opts = opts
 	sum := &Summary{}
 	for _, h := range s.HotSpots {
 		if !h.Resolved {
@@ -166,11 +186,38 @@ func (e *emitter) writeFeature(outDir, ctxID, name, content string, sum *Summary
 		return err
 	}
 	sum.FeatureFiles = append(sum.FeatureFiles, path)
+	sum.Lint = append(sum.Lint, e.lintSteps(path, ctxID, content)...)
 	return nil
 }
 
+var stepKeywords = []string{"Given ", "When ", "Then ", "And ", "But "}
+
+// lintSteps checks every step line of an emitted feature against the glossary.
+func (e *emitter) lintSteps(path, ctxID, content string) []LintFinding {
+	var findings []LintFinding
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		for _, kw := range stepKeywords {
+			text, ok := strings.CutPrefix(line, kw)
+			if !ok {
+				continue
+			}
+			for _, issue := range session.LintStep(e.s, ctxID, text) {
+				findings = append(findings, LintFinding{File: path, Step: line, Type: issue.Type, Message: issue.Message})
+			}
+			break
+		}
+	}
+	return findings
+}
+
 func (e *emitter) writeFeatures(outDir string, sum *Summary) error {
+	sum.Warnings = append(sum.Warnings, e.crossAggregateWarnings()...)
+	sum.Warnings = append(sum.Warnings, e.stalePolicyNameWarnings()...)
 	for _, agg := range e.s.Aggregates {
+		if agg.Deprecated && !e.opts.IncludeDeprecated {
+			continue
+		}
 		content, warns, n := e.buildFeature(agg)
 		sum.Warnings = append(sum.Warnings, warns...)
 		sum.ScenarioCount += n
@@ -200,6 +247,96 @@ func (e *emitter) writeFeatures(outDir string, sum *Summary) error {
 	return nil
 }
 
+// crossAggregateWarnings flags events that land in a different aggregate from
+// the command that triggers them. An aggregate is a consistency boundary, so
+// one command should change one aggregate; a policy usually connects the two.
+func (e *emitter) crossAggregateWarnings() []string {
+	var warnings []string
+	for _, ev := range e.s.Events {
+		cmd, ok := e.commandByID[ev.TriggerCommandID]
+		if !ok || ev.AggregateID == "" || cmd.AggregateID == "" || ev.AggregateID == cmd.AggregateID {
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"event %q is in aggregate %q but its trigger command %q is in %q — one command should change one aggregate; consider a policy from an event in %q to a command in %q",
+			ev.Name, e.aggByID[ev.AggregateID].Name, cmd.Name, e.aggByID[cmd.AggregateID].Name,
+			e.aggByID[cmd.AggregateID].Name, e.aggByID[ev.AggregateID].Name,
+		))
+	}
+	return warnings
+}
+
+var pascalName = regexp.MustCompile(`\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+\b`)
+
+// stalePolicyNameWarnings flags policy names that mention an event or command
+// name that no longer exists, usually after a rename. The name is the
+// scenario title, so it should be updated too.
+func (e *emitter) stalePolicyNameWarnings() []string {
+	known := make(map[string]bool)
+	for _, ev := range e.s.Events {
+		known[ev.Name] = true
+	}
+	for _, c := range e.s.Commands {
+		known[c.Name] = true
+	}
+	var warnings []string
+	for _, p := range e.s.Policies {
+		for _, name := range pascalName.FindAllString(p.Name, -1) {
+			if !known[name] {
+				warnings = append(warnings, fmt.Sprintf(
+					"policy %q (%s) mentions %q, which is no longer an event or command name — update_policy with a new name",
+					p.Name, p.ID, name,
+				))
+			}
+		}
+	}
+	return warnings
+}
+
+// phraser returns a Phraser over the glossary terms a context may use: its
+// own, terms shared with it, and terms with no context.
+func (e *emitter) phraser(ctxID string) Phraser {
+	var terms []session.GlossaryTerm
+	for _, t := range e.s.Glossary {
+		if t.ContextID == "" || t.ContextID == ctxID || slices.Contains(t.SharedWith, ctxID) {
+			terms = append(terms, t)
+		}
+	}
+	return NewPhraser(terms)
+}
+
+// lowerFirst lower-cases the first word of expert-typed step text ("Ledger
+// exists" → "ledger exists") so it reads mid-sentence. Only a capitalised
+// word is touched; acronyms ("API") and later words are left alone.
+func lowerFirst(s string) string {
+	first, rest, _ := strings.Cut(s, " ")
+	r := []rune(first)
+	if len(r) < 2 || !unicode.IsUpper(r[0]) {
+		return s
+	}
+	for _, c := range r[1:] {
+		if unicode.IsUpper(c) {
+			return s
+		}
+	}
+	r[0] = unicode.ToLower(r[0])
+	if rest == "" {
+		return string(r)
+	}
+	return string(r) + " " + rest
+}
+
+// writeGivens writes preconditions as one Given followed by Ands.
+func writeGivens(b *strings.Builder, givens []string) {
+	for i, g := range givens {
+		kw := "Given"
+		if i > 0 {
+			kw = "And"
+		}
+		b.WriteString(fmt.Sprintf("    %s %s\n", kw, lowerFirst(g)))
+	}
+}
+
 // policyContext is the policy's own context, else the context of the
 // aggregate that receives its command, else that of its trigger event's
 // aggregate.
@@ -220,25 +357,25 @@ func (e *emitter) policyContext(p session.Policy) string {
 	return ""
 }
 
-func whenText(cmd session.Command, actor session.Actor) string {
+func whenText(p Phraser, cmd session.Command, actor session.Actor) string {
 	if cmd.Phrasing != "" {
 		return cmd.Phrasing
 	}
-	return WhenStep(cmd.Name, actor.Name)
+	return p.When(cmd.Name, actor.Name)
 }
 
-func titleText(cmd session.Command, actor session.Actor) string {
+func titleText(p Phraser, cmd session.Command, actor session.Actor) string {
 	if cmd.Phrasing != "" {
 		return cmd.Phrasing
 	}
-	return ScenarioTitle(cmd.Name, actor.Name)
+	return p.Title(cmd.Name, actor.Name)
 }
 
-func thenText(ev session.Event) string {
+func thenText(p Phraser, ev session.Event) string {
 	if ev.Phrasing != "" {
 		return ev.Phrasing
 	}
-	return ThenStep(ev.Name)
+	return p.Then(ev.Name)
 }
 
 // writeHotSpots lists a context's open hot spots as comments at the top of
@@ -255,6 +392,7 @@ func (e *emitter) writeHotSpots(b *strings.Builder, ctxID string) {
 func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings []string, scenarioCount int) {
 	var b strings.Builder
 	_, ctxTag := e.contextDir(agg.ContextID)
+	ph := e.phraser(agg.ContextID)
 
 	e.writeHotSpots(&b, agg.ContextID)
 	// Gherkin tags may not contain whitespace, so names are slugged.
@@ -302,18 +440,16 @@ func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings 
 		if len(unconditional) > 0 {
 			scenarioCount++
 			b.WriteString("\n")
-			writeProposedTag(&b, cmd.Source == session.SourceFacilitator, unconditional...)
-			b.WriteString(fmt.Sprintf("  Scenario: %s\n", titleText(cmd, actor)))
-			for _, pre := range cmd.Preconditions {
-				b.WriteString(fmt.Sprintf("    Given %s\n", pre))
-			}
-			b.WriteString(fmt.Sprintf("    When %s\n", whenText(cmd, actor)))
+			writeFacilitatorTag(&b, cmd.Source == session.SourceFacilitator, unconditional...)
+			b.WriteString(fmt.Sprintf("  Scenario: %s\n", titleText(ph, cmd, actor)))
+			writeGivens(&b, cmd.Preconditions)
+			b.WriteString(fmt.Sprintf("    When %s\n", whenText(ph, cmd, actor)))
 			for i, ev := range unconditional {
 				kw := "Then"
 				if i > 0 {
 					kw = "And"
 				}
-				b.WriteString(fmt.Sprintf("    %s %s\n", kw, thenText(ev)))
+				b.WriteString(fmt.Sprintf("    %s %s\n", kw, thenText(ph, ev)))
 			}
 		}
 
@@ -321,19 +457,25 @@ func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings 
 		for _, ev := range conditional {
 			scenarioCount++
 			b.WriteString("\n")
-			title := titleText(cmd, actor) + " (" + strings.ToLower(ev.Condition) + ")"
-			writeProposedTag(&b, cmd.Source == session.SourceFacilitator, ev)
+			title := titleText(ph, cmd, actor) + " (" + strings.ToLower(ev.Condition) + ")"
+			writeFacilitatorTag(&b, cmd.Source == session.SourceFacilitator, ev)
 			b.WriteString(fmt.Sprintf("  Scenario: %s\n", title))
-			for _, pre := range cmd.Preconditions {
-				b.WriteString(fmt.Sprintf("    Given %s\n", pre))
+			// The precondition the condition negates would make the scenario
+			// unsatisfiable ("Given X / And not X"), so it's left out.
+			givens := cmd.Preconditions
+			if ev.Negates != "" {
+				if slices.Contains(givens, ev.Negates) {
+					givens = slices.DeleteFunc(slices.Clone(givens), func(g string) bool { return g == ev.Negates })
+				} else {
+					warnings = append(warnings, fmt.Sprintf(
+						"event %q negates %q, which is no longer a precondition of %q — set_event_condition with the current wording",
+						ev.Name, ev.Negates, cmd.Name,
+					))
+				}
 			}
-			condKw := "And"
-			if len(cmd.Preconditions) == 0 {
-				condKw = "Given"
-			}
-			b.WriteString(fmt.Sprintf("    %s %s\n", condKw, ev.Condition))
-			b.WriteString(fmt.Sprintf("    When %s\n", whenText(cmd, actor)))
-			b.WriteString(fmt.Sprintf("    Then %s\n", thenText(ev)))
+			writeGivens(&b, append(slices.Clone(givens), ev.Condition))
+			b.WriteString(fmt.Sprintf("    When %s\n", whenText(ph, cmd, actor)))
+			b.WriteString(fmt.Sprintf("    Then %s\n", thenText(ph, ev)))
 		}
 
 		// A lone conditional event with no happy path is usually a gap. Two or
@@ -369,7 +511,7 @@ func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings 
 				if i > 0 {
 					kw = "And"
 				}
-				b.WriteString(fmt.Sprintf("    %s %s\n", kw, thenText(ev)))
+				b.WriteString(fmt.Sprintf("    %s %s\n", kw, thenText(ph, ev)))
 			}
 			scenarioCount = 1
 		} else {
@@ -389,6 +531,7 @@ func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings 
 func (e *emitter) buildPolicyFeature(ctxID string, policies []session.Policy) (content string, warnings []string, scenarioCount int) {
 	var b strings.Builder
 	_, ctxTag := e.contextDir(ctxID)
+	ph := e.phraser(ctxID)
 	name := "Uncategorised"
 	if ctx, ok := e.contextByID[ctxID]; ok {
 		name = ctx.Name
@@ -412,15 +555,15 @@ func (e *emitter) buildPolicyFeature(ctxID string, policies []session.Policy) (c
 		b.WriteString("\n")
 		tags := "@policy:" + Slug(p.Name)
 		if p.Source == session.SourceFacilitator {
-			tags += " @proposed"
+			tags += " @facilitator"
 		}
 		b.WriteString(fmt.Sprintf("  %s\n", tags))
 		b.WriteString(fmt.Sprintf("  Scenario: %s\n", p.Name))
 		if p.Condition != "" {
-			b.WriteString(fmt.Sprintf("    Given %s\n", p.Condition))
+			writeGivens(&b, []string{p.Condition})
 		}
-		b.WriteString(fmt.Sprintf("    When %s\n", thenText(ev)))
-		b.WriteString(fmt.Sprintf("    Then %s\n", whenText(cmd, e.actorByID[cmd.ActorID])))
+		b.WriteString(fmt.Sprintf("    When %s\n", thenText(ph, ev)))
+		b.WriteString(fmt.Sprintf("    Then %s\n", whenText(ph, cmd, e.actorByID[cmd.ActorID])))
 	}
 	if scenarioCount == 0 {
 		b.WriteString("\n  # TODO: no policy has both a trigger event and a resulting command\n")
@@ -428,15 +571,16 @@ func (e *emitter) buildPolicyFeature(ctxID string, policies []session.Policy) (c
 	return b.String(), warnings, scenarioCount
 }
 
-// writeProposedTag tags a scenario @proposed when its command or any of its
-// events came from the facilitator rather than the domain expert, so those
-// scenarios get an extra review.
-func writeProposedTag(b *strings.Builder, proposed bool, events ...session.Event) {
+// writeFacilitatorTag tags a scenario @facilitator when its command or any of
+// its events came from the facilitator's proposals (which the expert
+// confirmed) rather than the expert's own words. It records provenance; it
+// doesn't mean the scenario is unconfirmed.
+func writeFacilitatorTag(b *strings.Builder, facilitator bool, events ...session.Event) {
 	for _, ev := range events {
-		proposed = proposed || ev.Source == session.SourceFacilitator
+		facilitator = facilitator || ev.Source == session.SourceFacilitator
 	}
-	if proposed {
-		b.WriteString("  @proposed\n")
+	if facilitator {
+		b.WriteString("  @facilitator\n")
 	}
 }
 
@@ -517,10 +661,12 @@ type ctxEntry struct {
 }
 
 type aggEntry struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Events   []string `json:"events"`
-	Commands []string `json:"commands"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Events            []string `json:"events"`
+	Commands          []string `json:"commands"`
+	Deprecated        bool     `json:"deprecated,omitempty"`
+	DeprecationReason string   `json:"deprecation_reason,omitempty"`
 }
 
 type actorEntry struct {
@@ -570,7 +716,10 @@ func (e *emitter) buildContextMap() ([]byte, error) {
 		for _, cmd := range e.commandsByAgg[agg.ID] {
 			commands = append(commands, cmd.Name)
 		}
-		return aggEntry{ID: agg.ID, Name: agg.Name, Events: events, Commands: commands}
+		return aggEntry{
+			ID: agg.ID, Name: agg.Name, Events: events, Commands: commands,
+			Deprecated: agg.Deprecated, DeprecationReason: agg.DeprecationReason,
+		}
 	}
 	policyEntryFor := func(p session.Policy) policyEntry {
 		return policyEntry{
