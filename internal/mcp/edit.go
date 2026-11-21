@@ -34,6 +34,19 @@ func withCommandPhrasing() libmcp.ToolOption {
 	)
 }
 
+func withAllowDuplicate() libmcp.ToolOption {
+	return libmcp.WithBoolean("allow_duplicate",
+		libmcp.Description("Record it even though a note with this name exists. Almost never right: a same-name note is usually a re-add, which should be an update or link instead."),
+	)
+}
+
+func addOptions(req libmcp.CallToolRequest) []session.AddOption {
+	if req.GetBool("allow_duplicate", false) {
+		return []session.AddOption{session.AllowDuplicate}
+	}
+	return nil
+}
+
 // optString returns nil when key is absent, so the caller can tell "leave
 // unchanged" from "set to empty".
 func optString(req libmcp.CallToolRequest, key string) (*string, error) {
@@ -207,6 +220,7 @@ func updatePolicyTool() libmcp.Tool {
 		libmcp.WithString("policy_id", libmcp.Required(), libmcp.Description("ID of the policy to edit")),
 		libmcp.WithString("name", libmcp.Description("New policy name")),
 		libmcp.WithString("trigger_event_id", libmcp.Description("ID of the event that triggers the policy")),
+		libmcp.WithString("trigger_time", libmcp.Description("Instead of an event: the moment in time that triggers the policy (e.g. 'a calendar month ends'); empty string clears it")),
 		libmcp.WithString("resulting_command_id", libmcp.Description("ID of the command the policy issues")),
 		libmcp.WithString("context_id", libmcp.Description("ID of the bounded context the policy belongs to")),
 		libmcp.WithString("condition", libmcp.Description("Condition under which the policy applies, beyond the trigger event")),
@@ -222,7 +236,7 @@ func handleUpdatePolicy(_ context.Context, req libmcp.CallToolRequest) (*libmcp.
 	}
 	var p session.PolicyPatch
 	if err := optStringFields(req, map[string]**string{
-		"name": &p.Name, "notes": &p.Notes, "trigger_event_id": &p.TriggerEventID,
+		"name": &p.Name, "notes": &p.Notes, "trigger_event_id": &p.TriggerEventID, "trigger_time": &p.TriggerTime,
 		"resulting_command_id": &p.ResultingCommandID, "context_id": &p.ContextID, "condition": &p.Condition,
 	}); err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
@@ -274,11 +288,14 @@ func handleUpdateReadModel(_ context.Context, req libmcp.CallToolRequest) (*libm
 
 func updateAggregateTool() libmcp.Tool {
 	return libmcp.NewTool("update_aggregate",
-		libmcp.WithDescription("Edit an aggregate's name or notes (a 'Rule: …' note is emitted as a Gherkin Rule). Omitted fields are unchanged. Use assign_to_aggregate to change its members and assign_to_context to change its context."),
+		libmcp.WithDescription("Edit an aggregate's name, notes (a 'Rule: …' note is emitted as a Gherkin Rule) or preconditions. Omitted fields are unchanged. Use assign_to_aggregate to change its members and assign_to_context to change its context."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("aggregate_id", libmcp.Required(), libmcp.Description("ID of the aggregate to edit")),
 		libmcp.WithString("name", libmcp.Description("New aggregate name")),
 		libmcp.WithString("notes", libmcp.Description("New notes; empty string clears them")),
+		libmcp.WithArray("preconditions", libmcp.WithStringItems(),
+			libmcp.Description("Preconditions that hold for every command on this aggregate (e.g. 'the accountant is signed in'), emitted once as the feature's Background instead of in every scenario. Replaces the list; remove them from the commands' own preconditions."),
+		),
 	)
 }
 
@@ -291,6 +308,9 @@ func handleUpdateAggregate(_ context.Context, req libmcp.CallToolRequest) (*libm
 	if err := optStringFields(req, map[string]**string{"name": &p.Name, "notes": &p.Notes}); err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
+	if p.Preconditions, err = optStrings(req, "preconditions"); err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
 	_, a, err := session.UpdateAggregate(ids[0], ids[1], p)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
@@ -300,11 +320,14 @@ func handleUpdateAggregate(_ context.Context, req libmcp.CallToolRequest) (*libm
 
 func updateContextTool() libmcp.Tool {
 	return libmcp.NewTool("update_bounded_context",
-		libmcp.WithDescription("Edit a bounded context's name or description. Omitted fields are unchanged. Use assign_to_context to change its members."),
+		libmcp.WithDescription("Edit a bounded context's name, description or preconditions. Omitted fields are unchanged. Use assign_to_context to change its members."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("context_id", libmcp.Required(), libmcp.Description("ID of the bounded context to edit")),
 		libmcp.WithString("name", libmcp.Description("New context name")),
 		libmcp.WithString("description", libmcp.Description("New description")),
+		libmcp.WithArray("preconditions", libmcp.WithStringItems(),
+			libmcp.Description("Preconditions that hold for every command in this context, emitted in the Background of each of its feature files. Replaces the list."),
+		),
 	)
 }
 
@@ -315,6 +338,9 @@ func handleUpdateContext(_ context.Context, req libmcp.CallToolRequest) (*libmcp
 	}
 	var p session.ContextPatch
 	if err := optStringFields(req, map[string]**string{"name": &p.Name, "description": &p.Description}); err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	if p.Preconditions, err = optStrings(req, "preconditions"); err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
 	_, c, err := session.UpdateContext(ids[0], ids[1], p)
@@ -403,4 +429,46 @@ func handleRemoveItem(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 		"kind":     args[1],
 		"detached": detached,
 	})
+}
+
+func mergeEventsTool() libmcp.Tool {
+	return libmcp.NewTool("merge_events",
+		libmcp.WithDescription("Fold a duplicate event into the one to keep and delete it. Policies it triggered move to the kept event; each field the kept event leaves empty (trigger command, aggregate, condition, phrasing, …) is taken from the duplicate; notes are concatenated. Where both have different values the kept one wins and the difference is reported, so relay the report to the expert."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("keep_event_id", libmcp.Required(), libmcp.Description("ID of the event to keep")),
+		libmcp.WithString("remove_event_id", libmcp.Required(), libmcp.Description("ID of the duplicate to fold in and delete")),
+	)
+}
+
+func handleMergeEvents(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	ids, err := requireIDs(req, "session_id", "keep_event_id", "remove_event_id")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	_, e, report, err := session.MergeEvents(ids[0], ids[1], ids[2])
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(map[string]any{"event": e, "removed": ids[2], "report": report})
+}
+
+func reopenHotSpotTool() libmcp.Tool {
+	return libmcp.NewTool("reopen_hotspot",
+		libmcp.WithDescription("Reopen a resolved hot spot when a later decision reverses it. Its resolution moves to the hot spot's history with the reason, so the context map shows the standing answer and how it got there. Resolve it again with resolve_hotspot."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("hotspot_id", libmcp.Required(), libmcp.Description("ID of the resolved hot spot")),
+		libmcp.WithString("reason", libmcp.Required(), libmcp.Description("Why the resolution no longer stands")),
+	)
+}
+
+func handleReopenHotSpot(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	args, err := requireIDs(req, "session_id", "hotspot_id", "reason")
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	_, h, err := session.ReopenHotSpot(args[0], args[1], args[2])
+	if err != nil {
+		return libmcp.NewToolResultError(err.Error()), nil
+	}
+	return resultJSON(h)
 }

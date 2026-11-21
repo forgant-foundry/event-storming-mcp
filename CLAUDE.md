@@ -22,9 +22,11 @@ internal/
                 AddReadModel, AddHotSpot, ClusterAggregate, ProposeContext, DefineTerm;
                 reconcile (two-sided membership repair, run by Load and Save)
     edit.go     Update*/patch structs, AssignToAggregate, AssignToContext, RemoveItem
-                (cascading delete), reference/source validation helpers
+                (cascading delete), MergeEvents, ReopenHotSpot, AliasWarnings,
+                reference/source validation helpers
     lint.go     LintStep — checks step text against glossary (alias violations,
-                cross-context leakage)
+                cross-context leakage); a match inside a longer occurrence of
+                another term's name or canonical phrasing doesn't count
 
   gherkin/
     style.go    Text helpers: CamelCase → words, WhenStep, ThenStep, ScenarioTitle, Slug
@@ -43,7 +45,8 @@ internal/
     server.go   Session, capture, clustering, emission, portability and playbook
                 tools; server version comes from Go build info (VCS tag), "dev"
                 when unavailable
-    edit.go     update_*, assign_to_*, remove_item; optString/optStrings helpers
+    edit.go     update_*, assign_to_*, remove_item, merge_events, reopen_hotspot;
+                optString/optStrings helpers
                 that tell an omitted argument from an empty one
 
 main.go
@@ -81,20 +84,24 @@ All IDs are `prefix_<8 random hex bytes>`:
 | `ctx_` | BoundedContext |
 | `term_` | GlossaryTerm |
 
-## MCP Tools (33 total)
+## MCP Tools (35 total)
 
 ### Session management
 - `start_session(name, description, sync_path?)` → session_id
 - `resume_session(session_id)` → full Session
 
 ### Sticky note capture
-- `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?, phrasing?, source?)`
-- `add_command(session_id, name, notes?, actor_id?, aggregate_id?, preconditions?, phrasing?, source?)`
+- `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?, phrasing?, source?, allow_duplicate?)`
+- `add_command(session_id, name, notes?, actor_id?, aggregate_id?, preconditions?, phrasing?, source?, allow_duplicate?)`
+
+Both refuse a name that already exists (case-insensitive) unless `allow_duplicate`;
+the error names the existing note and points at link/update.
 
 `phrasing` overrides the derived step text verbatim (for a command it's the whole
 When step including the actor, and the scenario title).
 - `add_actor(session_id, name, type)` — type: person | role | external_system
-- `add_policy(session_id, name, trigger_event_id?, resulting_command_id?, context_id?, condition?, notes?, source?)`
+- `add_policy(session_id, name, trigger_event_id? | trigger_time?, resulting_command_id?, context_id?, condition?, notes?, source?)`
+  — `trigger_time` ("a calendar month ends") replaces an event trigger; not both
 - `add_read_model(session_id, name, actor_ids?, context_id?, notes?, source?)` — `actor_id` still accepted
 
 `source` is expert | facilitator | imported. Facilitator-sourced commands/events emit
@@ -108,6 +115,7 @@ doesn't mean unconfirmed).
 - `set_event_condition(session_id, event_id, condition, negates?)` — conditional/rejection
   event; `negates` is the trigger command's precondition it contradicts, word for word
 - `resolve_hotspot(session_id, hotspot_id, resolution)`
+- `reopen_hotspot(session_id, hotspot_id, reason)` — moves the resolution into `history`
 - `deprecate_aggregate(session_id, aggregate_id, reason?)`
 
 ### Editing
@@ -116,17 +124,23 @@ array replaces the whole list.
 - `update_event(session_id, event_id, name?, notes?, phrasing?, source?)`
 - `update_command(session_id, command_id, name?, notes?, actor_id?, preconditions?, phrasing?, source?)`
 - `update_actor(session_id, actor_id, name?, type?, notes?)`
-- `update_policy(session_id, policy_id, name?, trigger_event_id?, resulting_command_id?, context_id?, condition?, notes?, source?)`
+- `update_policy(session_id, policy_id, name?, trigger_event_id?, trigger_time?, resulting_command_id?, context_id?, condition?, notes?, source?)`
 - `update_read_model(session_id, read_model_id, name?, actor_ids?, context_id?, notes?, source?)`
-- `update_aggregate(session_id, aggregate_id, name?, notes?)`
-- `update_bounded_context(session_id, context_id, name?, description?)`
+- `update_aggregate(session_id, aggregate_id, name?, notes?, preconditions?)`
+- `update_bounded_context(session_id, context_id, name?, description?, preconditions?)`
+  — aggregate/context preconditions are emitted as `Background`
 - `assign_to_aggregate(session_id, aggregate_id, event_ids?, command_ids?, move?)`
 - `assign_to_context(session_id, context_id, aggregate_ids?, glossary_term_ids?, move?)`
 - `remove_item(session_id, kind, id)` → { removed, kind, detached } — cascades: clears
   every reference to the removed record and reports each one
+- `merge_events(session_id, keep_event_id, remove_event_id)` → { event, removed, report }
+  — moves policies, fills keep's empty fields from remove, concatenates notes, reports
+  conflicts (keep wins)
 
 ### Glossary
 - `define_term(session_id, term, definition, canonical_phrasing?, aliases?, context_id?, shared_with?)`
+  → { term, alias_warnings } — warns about aliases that are Gherkin keywords, sit
+  inside another term's canonical phrasing, or appear in definitions or notes
   — `shared_with` lists contexts that use the term on purpose; lint_steps won't flag it there
 - `lint_steps(session_id, step_text, context_id?)` → { clean, issues }
 
@@ -193,6 +207,11 @@ Open hot spots are written as `# Open question (id): …` comments at the top of
 feature file in their context. context-map.json also lists actors, and per context
 the policies, read models (with readers) and hot spots (open and resolved).
 Scenarios from facilitator-sourced commands, events or policies are tagged `@facilitator`.
+
+Context and aggregate preconditions are emitted once as `Background:` (context first,
+deduplicated), and a command's own copy of one is dropped from its scenarios. They
+can't be `negates` targets. Time-triggered policies emit `When <trigger_time>`.
+Events or commands sharing a name (case-insensitive) warn, pointing at `merge_events`.
 
 Preconditions are written as one `Given` then `And`s, with the first word lower-cased
 unless it's an acronym. A conditional event's `Negates` (set via

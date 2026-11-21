@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"slices"
+	"time"
 )
 
 // Record kinds, as accepted by RemoveItem and used in error messages.
@@ -76,6 +77,28 @@ func CheckActorType(t ActorType) error {
 		return nil
 	}
 	return fmt.Errorf("type must be one of: person, role, external_system; got %q", t)
+}
+
+// checkPolicyTrigger rejects a policy with both an event and a time trigger.
+func checkPolicyTrigger(p Policy) error {
+	if p.TriggerEventID != "" && p.TriggerTime != "" {
+		return fmt.Errorf("a policy is triggered by an event or by a time, not both; clear trigger_event_id or trigger_time")
+	}
+	return nil
+}
+
+// sharedPrecondition reports whether pre is one of the aggregate- or
+// context-wide preconditions that apply to cmd.
+func sharedPrecondition(s *Session, cmd Command, pre string) bool {
+	i := slices.IndexFunc(s.Aggregates, func(a Aggregate) bool { return a.ID == cmd.AggregateID })
+	if i < 0 {
+		return false
+	}
+	if slices.Contains(s.Aggregates[i].Preconditions, pre) {
+		return true
+	}
+	ci := slices.IndexFunc(s.BoundedContexts, func(c BoundedContext) bool { return c.ID == s.Aggregates[i].ContextID })
+	return ci >= 0 && slices.Contains(s.BoundedContexts[ci].Preconditions, pre)
 }
 
 func checkName(name *string) error {
@@ -203,8 +226,8 @@ func UpdateActor(sessionID, actorID string, p ActorPatch) (*Session, *Actor, err
 }
 
 type PolicyPatch struct {
-	Name, Notes, TriggerEventID, ResultingCommandID, ContextID, Condition *string
-	Source                                                                *Source
+	Name, Notes, TriggerEventID, TriggerTime, ResultingCommandID, ContextID, Condition *string
+	Source                                                                             *Source
 }
 
 func UpdatePolicy(sessionID, policyID string, p PolicyPatch) (*Session, *Policy, error) {
@@ -241,6 +264,10 @@ func UpdatePolicy(sessionID, policyID string, p PolicyPatch) (*Session, *Policy,
 	set(&pol.Name, p.Name)
 	set(&pol.Notes, p.Notes)
 	set(&pol.TriggerEventID, p.TriggerEventID)
+	set(&pol.TriggerTime, p.TriggerTime)
+	if err := checkPolicyTrigger(*pol); err != nil {
+		return nil, nil, err
+	}
 	set(&pol.ResultingCommandID, p.ResultingCommandID)
 	set(&pol.ContextID, p.ContextID)
 	set(&pol.Condition, p.Condition)
@@ -299,7 +326,8 @@ func UpdateReadModel(sessionID, readModelID string, p ReadModelPatch) (*Session,
 }
 
 type AggregatePatch struct {
-	Name, Notes *string
+	Name, Notes   *string
+	Preconditions *[]string
 }
 
 // UpdateAggregate edits an aggregate's name or notes. Use AssignToAggregate to
@@ -319,6 +347,7 @@ func UpdateAggregate(sessionID, aggregateID string, p AggregatePatch) (*Session,
 	a := &s.Aggregates[i]
 	set(&a.Name, p.Name)
 	set(&a.Notes, p.Notes)
+	set(&a.Preconditions, p.Preconditions)
 	if err := Save(s); err != nil {
 		return nil, nil, err
 	}
@@ -327,6 +356,7 @@ func UpdateAggregate(sessionID, aggregateID string, p AggregatePatch) (*Session,
 
 type ContextPatch struct {
 	Name, Description *string
+	Preconditions     *[]string
 }
 
 func UpdateContext(sessionID, contextID string, p ContextPatch) (*Session, *BoundedContext, error) {
@@ -344,6 +374,7 @@ func UpdateContext(sessionID, contextID string, p ContextPatch) (*Session, *Boun
 	c := &s.BoundedContexts[i]
 	set(&c.Name, p.Name)
 	set(&c.Description, p.Description)
+	set(&c.Preconditions, p.Preconditions)
 	if err := Save(s); err != nil {
 		return nil, nil, err
 	}
@@ -547,4 +578,157 @@ func RemoveItem(sessionID, kind, id string) (*Session, []string, error) {
 		return nil, nil, err
 	}
 	return s, detached, nil
+}
+
+// MergeEvents folds the event removeID into keepID and deletes it: policies
+// triggered by it move to keepID, and each field keepID leaves empty is taken
+// from removeID. Where both have a different value, keepID's stays and the
+// difference is reported. Notes are concatenated when they differ.
+func MergeEvents(sessionID, keepID, removeID string) (*Session, *Event, []string, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if keepID == removeID {
+		return nil, nil, nil, fmt.Errorf("keep and remove are the same event")
+	}
+	ki := slices.IndexFunc(s.Events, func(e Event) bool { return e.ID == keepID })
+	ri := slices.IndexFunc(s.Events, func(e Event) bool { return e.ID == removeID })
+	if ki < 0 {
+		return nil, nil, nil, fmt.Errorf("event %s not found", keepID)
+	}
+	if ri < 0 {
+		return nil, nil, nil, fmt.Errorf("event %s not found", removeID)
+	}
+	keep, gone := &s.Events[ki], s.Events[ri]
+
+	var report []string
+	take := func(field string, dst *string, src string) {
+		switch {
+		case src == "" || *dst == src:
+		case *dst == "":
+			*dst = src
+			report = append(report, fmt.Sprintf("%s taken from %s: %q", field, removeID, src))
+		default:
+			report = append(report, fmt.Sprintf("%s differs; kept %q, dropped %q", field, *dst, src))
+		}
+	}
+	take("trigger_command_id", &keep.TriggerCommandID, gone.TriggerCommandID)
+	take("aggregate_id", &keep.AggregateID, gone.AggregateID)
+	take("context_id", &keep.ContextID, gone.ContextID)
+	take("condition", &keep.Condition, gone.Condition)
+	take("negates", &keep.Negates, gone.Negates)
+	take("phrasing", &keep.Phrasing, gone.Phrasing)
+	src := string(keep.Source)
+	take("source", &src, string(gone.Source))
+	keep.Source = Source(src)
+	if gone.Notes != "" && gone.Notes != keep.Notes {
+		if keep.Notes == "" {
+			keep.Notes = gone.Notes
+		} else {
+			keep.Notes += "\n\n" + gone.Notes
+		}
+		report = append(report, "notes merged")
+	}
+	for i := range s.Policies {
+		if s.Policies[i].TriggerEventID == removeID {
+			s.Policies[i].TriggerEventID = keepID
+			report = append(report, fmt.Sprintf("policy %q now triggered by %s", s.Policies[i].Name, keepID))
+		}
+	}
+
+	s.Events = slices.Delete(s.Events, ri, ri+1)
+	if err := Save(s); err != nil {
+		return nil, nil, nil, err
+	}
+	ki = slices.IndexFunc(s.Events, func(e Event) bool { return e.ID == keepID })
+	return s, &s.Events[ki], report, nil
+}
+
+// ReopenHotSpot reopens a resolved hot spot, keeping its resolution in the
+// history with the reason it no longer stands.
+func ReopenHotSpot(sessionID, hotSpotID, reason string) (*Session, *HotSpot, error) {
+	s, err := Load(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	i := slices.IndexFunc(s.HotSpots, func(h HotSpot) bool { return h.ID == hotSpotID })
+	if i < 0 {
+		return nil, nil, fmt.Errorf("hot spot %s not found", hotSpotID)
+	}
+	h := &s.HotSpots[i]
+	if !h.Resolved {
+		return nil, nil, fmt.Errorf("hot spot %s is already open", hotSpotID)
+	}
+	h.History = append(h.History, PastResolution{Resolution: h.Resolution, ReopenedBecause: reason, ReopenedAt: time.Now()})
+	h.Resolved = false
+	h.Resolution = ""
+	if err := Save(s); err != nil {
+		return nil, nil, err
+	}
+	return s, h, nil
+}
+
+var gherkinKeywords = map[string]bool{
+	"feature": true, "rule": true, "scenario": true, "example": true, "examples": true,
+	"background": true, "given": true, "when": true, "then": true, "and": true, "but": true,
+}
+
+// AliasWarnings explains which of term's aliases can't be linted reliably:
+// one that's a Gherkin keyword, one that sits inside another term's
+// canonical phrasing, or one that the session already uses as an ordinary
+// word, in another term's definition or in notes.
+func AliasWarnings(s *Session, term GlossaryTerm) []string {
+	var notes []string
+	for _, e := range s.Events {
+		notes = append(notes, e.Notes)
+	}
+	for _, c := range s.Commands {
+		notes = append(notes, c.Notes)
+	}
+	for _, p := range s.Policies {
+		notes = append(notes, p.Notes)
+	}
+	for _, r := range s.ReadModels {
+		notes = append(notes, r.Notes)
+	}
+	for _, a := range s.Aggregates {
+		notes = append(notes, a.Notes)
+	}
+
+	var warnings []string
+	for _, alias := range term.Aliases {
+		at := tokenize(alias)
+		if len(at) == 1 && gherkinKeywords[at[0]] {
+			warnings = append(warnings, fmt.Sprintf("alias %q is a Gherkin keyword", alias))
+			continue
+		}
+		for _, other := range s.Glossary {
+			if other.ID == term.ID || other.Term == term.Term {
+				continue
+			}
+			if containsPhrase(tokenize(other.CanonicalPhrasing), at) {
+				warnings = append(warnings, fmt.Sprintf(
+					"alias %q occurs in %q's canonical phrasing %q; lint ignores it there, but it may mean %q more often than %q",
+					alias, other.Term, other.CanonicalPhrasing, other.Term, term.Term))
+			}
+			if containsPhrase(tokenize(other.Definition), at) {
+				warnings = append(warnings, fmt.Sprintf(
+					"alias %q is used as an ordinary word in %q's definition; flagging it in steps will likely be noise",
+					alias, other.Term))
+			}
+		}
+		n := 0
+		for _, note := range notes {
+			if containsPhrase(tokenize(note), at) {
+				n++
+			}
+		}
+		if n > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"alias %q appears in %d note(s) in this session; if it's an ordinary word in this domain, drop it from the aliases",
+				alias, n))
+		}
+	}
+	return warnings
 }

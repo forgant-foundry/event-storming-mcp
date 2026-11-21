@@ -212,6 +212,7 @@ func (e *emitter) lintSteps(path, ctxID, content string) []LintFinding {
 }
 
 func (e *emitter) writeFeatures(outDir string, sum *Summary) error {
+	sum.Warnings = append(sum.Warnings, e.duplicateNameWarnings()...)
 	sum.Warnings = append(sum.Warnings, e.crossAggregateWarnings()...)
 	sum.Warnings = append(sum.Warnings, e.stalePolicyNameWarnings()...)
 	for _, agg := range e.s.Aggregates {
@@ -306,12 +307,14 @@ func (e *emitter) phraser(ctxID string) Phraser {
 }
 
 // lowerFirst lower-cases the first word of expert-typed step text ("Ledger
-// exists" → "ledger exists") so it reads mid-sentence. Only a capitalised
-// word is touched; acronyms ("API") and later words are left alone.
+// exists" → "ledger exists", "A month ends" → "a month ends") so it reads
+// mid-sentence. Only a capitalised word is touched; acronyms ("API"), "I" and
+// later words are left alone.
 func lowerFirst(s string) string {
 	first, rest, _ := strings.Cut(s, " ")
 	r := []rune(first)
-	if len(r) < 2 || !unicode.IsUpper(r[0]) {
+	// A one-letter word is lowered only if it's the article "A".
+	if len(r) == 0 || !unicode.IsUpper(r[0]) || (len(r) == 1 && r[0] != 'A') {
 		return s
 	}
 	for _, c := range r[1:] {
@@ -324,6 +327,64 @@ func lowerFirst(s string) string {
 		return string(r)
 	}
 	return string(r) + " " + rest
+}
+
+// background is the context's preconditions followed by the aggregate's,
+// without repeats.
+func (e *emitter) background(ctxID string, aggPreconditions []string) []string {
+	var out []string
+	for _, g := range append(slices.Clone(e.contextByID[ctxID].Preconditions), aggPreconditions...) {
+		if !slices.Contains(out, g) {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+func writeBackground(b *strings.Builder, givens []string) {
+	if len(givens) == 0 {
+		return
+	}
+	b.WriteString("\n  Background:\n")
+	writeGivens(b, givens)
+}
+
+// duplicateNameWarnings flags events or commands that share a name, usually
+// from re-adding a note instead of linking or updating it.
+func (e *emitter) duplicateNameWarnings() []string {
+	var warnings []string
+	check := func(kind string, names, ids []string) {
+		byName := make(map[string][]string)
+		var order []string
+		for i, n := range names {
+			key := strings.ToLower(n)
+			if _, seen := byName[key]; !seen {
+				order = append(order, key)
+			}
+			byName[key] = append(byName[key], ids[i])
+		}
+		for _, key := range order {
+			if dup := byName[key]; len(dup) > 1 {
+				hint := "merge_events keeps one and folds in the others"
+				if kind == "command" {
+					hint = "remove_item the extra ones after moving their links"
+				}
+				warnings = append(warnings, fmt.Sprintf("%d %ss share the name %q (%s) — %s",
+					len(dup), kind, names[slices.Index(ids, dup[0])], strings.Join(dup, ", "), hint))
+			}
+		}
+	}
+	var names, ids []string
+	for _, ev := range e.s.Events {
+		names, ids = append(names, ev.Name), append(ids, ev.ID)
+	}
+	check("event", names, ids)
+	names, ids = nil, nil
+	for _, c := range e.s.Commands {
+		names, ids = append(names, c.Name), append(ids, c.ID)
+	}
+	check("command", names, ids)
+	return warnings
 }
 
 // writeGivens writes preconditions as one Given followed by Ands.
@@ -413,6 +474,12 @@ func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings 
 	if agg.Notes != "" {
 		b.WriteString(fmt.Sprintf("\n  %s\n", agg.Notes))
 	}
+	background := e.background(agg.ContextID, agg.Preconditions)
+	writeBackground(&b, background)
+	// A command's own copy of a Background precondition would repeat it.
+	ownGivens := func(cmd session.Command) []string {
+		return slices.DeleteFunc(slices.Clone(cmd.Preconditions), func(g string) bool { return slices.Contains(background, g) })
+	}
 
 	for _, cmd := range e.commandsByAgg[agg.ID] {
 		allEvents := e.eventsByCmd[cmd.ID]
@@ -442,7 +509,7 @@ func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings 
 			b.WriteString("\n")
 			writeFacilitatorTag(&b, cmd.Source == session.SourceFacilitator, unconditional...)
 			b.WriteString(fmt.Sprintf("  Scenario: %s\n", titleText(ph, cmd, actor)))
-			writeGivens(&b, cmd.Preconditions)
+			writeGivens(&b, ownGivens(cmd))
 			b.WriteString(fmt.Sprintf("    When %s\n", whenText(ph, cmd, actor)))
 			for i, ev := range unconditional {
 				kw := "Then"
@@ -462,7 +529,7 @@ func (e *emitter) buildFeature(agg session.Aggregate) (content string, warnings 
 			b.WriteString(fmt.Sprintf("  Scenario: %s\n", title))
 			// The precondition the condition negates would make the scenario
 			// unsatisfiable ("Given X / And not X"), so it's left out.
-			givens := cmd.Preconditions
+			givens := ownGivens(cmd)
 			if ev.Negates != "" {
 				if slices.Contains(givens, ev.Negates) {
 					givens = slices.DeleteFunc(slices.Clone(givens), func(g string) bool { return g == ev.Negates })
@@ -540,16 +607,21 @@ func (e *emitter) buildPolicyFeature(ctxID string, policies []session.Policy) (c
 	e.writeHotSpots(&b, ctxID)
 	b.WriteString(fmt.Sprintf("@context:%s\n", ctxTag))
 	b.WriteString(fmt.Sprintf("Feature: %s policies\n", name))
+	writeBackground(&b, e.background(ctxID, nil))
 
 	for _, p := range policies {
 		ev, hasEvent := e.eventByID[p.TriggerEventID]
 		cmd, hasCmd := e.commandByID[p.ResultingCommandID]
-		if !hasEvent || !hasCmd {
+		if !(hasEvent || p.TriggerTime != "") || !hasCmd {
 			warnings = append(warnings, fmt.Sprintf(
-				"policy %q (%s) needs both a trigger event and a resulting command — scenario omitted",
+				"policy %q (%s) needs a trigger (an event or a trigger_time) and a resulting command — scenario omitted",
 				p.Name, p.ID,
 			))
 			continue
+		}
+		trigger := lowerFirst(p.TriggerTime)
+		if hasEvent {
+			trigger = thenText(ph, ev)
 		}
 		scenarioCount++
 		b.WriteString("\n")
@@ -562,7 +634,7 @@ func (e *emitter) buildPolicyFeature(ctxID string, policies []session.Policy) (c
 		if p.Condition != "" {
 			writeGivens(&b, []string{p.Condition})
 		}
-		b.WriteString(fmt.Sprintf("    When %s\n", thenText(ph, ev)))
+		b.WriteString(fmt.Sprintf("    When %s\n", trigger))
 		b.WriteString(fmt.Sprintf("    Then %s\n", whenText(ph, cmd, e.actorByID[cmd.ActorID])))
 	}
 	if scenarioCount == 0 {
@@ -650,14 +722,15 @@ type contextMapJSON struct {
 }
 
 type ctxEntry struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	Aggregates  []aggEntry       `json:"aggregates"`
-	Policies    []policyEntry    `json:"policies,omitempty"`
-	ReadModels  []readModelEntry `json:"read_models,omitempty"`
-	HotSpots    []hotSpotEntry   `json:"hot_spots,omitempty"`
-	Glossary    []termEntry      `json:"glossary_terms,omitempty"`
+	ID            string           `json:"id"`
+	Name          string           `json:"name"`
+	Description   string           `json:"description,omitempty"`
+	Preconditions []string         `json:"preconditions,omitempty"`
+	Aggregates    []aggEntry       `json:"aggregates"`
+	Policies      []policyEntry    `json:"policies,omitempty"`
+	ReadModels    []readModelEntry `json:"read_models,omitempty"`
+	HotSpots      []hotSpotEntry   `json:"hot_spots,omitempty"`
+	Glossary      []termEntry      `json:"glossary_terms,omitempty"`
 }
 
 type aggEntry struct {
@@ -665,6 +738,7 @@ type aggEntry struct {
 	Name              string   `json:"name"`
 	Events            []string `json:"events"`
 	Commands          []string `json:"commands"`
+	Preconditions     []string `json:"preconditions,omitempty"`
 	Deprecated        bool     `json:"deprecated,omitempty"`
 	DeprecationReason string   `json:"deprecation_reason,omitempty"`
 }
@@ -679,6 +753,7 @@ type policyEntry struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	TriggerEvent string `json:"trigger_event,omitempty"`
+	TriggerTime  string `json:"trigger_time,omitempty"`
 	Command      string `json:"command,omitempty"`
 	Condition    string `json:"condition,omitempty"`
 }
@@ -691,10 +766,11 @@ type readModelEntry struct {
 }
 
 type hotSpotEntry struct {
-	ID         string `json:"id"`
-	Question   string `json:"question"`
-	Resolved   bool   `json:"resolved"`
-	Resolution string `json:"resolution,omitempty"`
+	ID         string                   `json:"id"`
+	Question   string                   `json:"question"`
+	Resolved   bool                     `json:"resolved"`
+	Resolution string                   `json:"resolution,omitempty"`
+	History    []session.PastResolution `json:"history,omitempty"`
 }
 
 type termEntry struct {
@@ -717,7 +793,7 @@ func (e *emitter) buildContextMap() ([]byte, error) {
 			commands = append(commands, cmd.Name)
 		}
 		return aggEntry{
-			ID: agg.ID, Name: agg.Name, Events: events, Commands: commands,
+			ID: agg.ID, Name: agg.Name, Events: events, Commands: commands, Preconditions: agg.Preconditions,
 			Deprecated: agg.Deprecated, DeprecationReason: agg.DeprecationReason,
 		}
 	}
@@ -726,6 +802,7 @@ func (e *emitter) buildContextMap() ([]byte, error) {
 			ID:           p.ID,
 			Name:         p.Name,
 			TriggerEvent: e.eventByID[p.TriggerEventID].Name,
+			TriggerTime:  p.TriggerTime,
 			Command:      e.commandByID[p.ResultingCommandID].Name,
 			Condition:    p.Condition,
 		}
@@ -740,7 +817,7 @@ func (e *emitter) buildContextMap() ([]byte, error) {
 		return readModelEntry{ID: rm.ID, Name: rm.Name, Readers: readers, Notes: rm.Notes}
 	}
 	hotSpotEntryFor := func(h session.HotSpot) hotSpotEntry {
-		return hotSpotEntry{ID: h.ID, Question: h.Question, Resolved: h.Resolved, Resolution: h.Resolution}
+		return hotSpotEntry{ID: h.ID, Question: h.Question, Resolved: h.Resolved, Resolution: h.Resolution, History: h.History}
 	}
 
 	// Index everything by context.
@@ -786,14 +863,15 @@ func (e *emitter) buildContextMap() ([]byte, error) {
 	}
 	for _, ctx := range e.s.BoundedContexts {
 		cm.BoundedContexts = append(cm.BoundedContexts, ctxEntry{
-			ID:          ctx.ID,
-			Name:        ctx.Name,
-			Description: ctx.Description,
-			Aggregates:  aggByCtx[ctx.ID],
-			Policies:    policiesByCtx[ctx.ID],
-			ReadModels:  readModelsByCtx[ctx.ID],
-			HotSpots:    hotSpotsByCtx[ctx.ID],
-			Glossary:    termByCtx[ctx.ID],
+			ID:            ctx.ID,
+			Name:          ctx.Name,
+			Description:   ctx.Description,
+			Preconditions: ctx.Preconditions,
+			Aggregates:    aggByCtx[ctx.ID],
+			Policies:      policiesByCtx[ctx.ID],
+			ReadModels:    readModelsByCtx[ctx.ID],
+			HotSpots:      hotSpotsByCtx[ctx.ID],
+			Glossary:      termByCtx[ctx.ID],
 		})
 	}
 

@@ -53,7 +53,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. The 33 tools will appear automatically.
+Restart Claude Desktop. The 35 tools will appear automatically.
 
 ### Claude Code
 
@@ -98,7 +98,7 @@ Claude will call `get_playbook("run-event-storming")` and follow the facilitatio
 script, calling tools as it goes. At the end, call `emit_gherkin` to write the
 output files.
 
-## Tools (33)
+## Tools (35)
 
 ### Session
 | Tool | Description |
@@ -123,6 +123,7 @@ output files.
 | `remove_event` | Delete an event and detach it from its aggregate and policies |
 | `set_event_condition` | Mark an event as conditional (e.g. a rejection); emitted as its own scenario. `negates` names the precondition it contradicts, which that scenario then leaves out |
 | `resolve_hotspot` | Close a hot spot with the decision that resolved it |
+| `reopen_hotspot` | Reopen a resolved hot spot when a decision is reversed; keeps the old resolution as history |
 | `deprecate_aggregate` | Mark an aggregate obsolete; its feature file is tagged `@deprecated` with no scenarios |
 
 ### Editing
@@ -132,11 +133,16 @@ output files.
 | `assign_to_aggregate` | Add events and commands to an existing aggregate (`move` to take them from another) |
 | `assign_to_context` | Add aggregates and glossary terms to an existing bounded context |
 | `remove_item` | Delete any record; every reference to it is cleared and reported |
+| `merge_events` | Fold a duplicate event into the one to keep, moving its links and notes |
 
 Events and commands take an optional `phrasing` used verbatim in the emitted steps.
 Capture and update tools take an optional `source` — `expert`, `facilitator` or
 `imported` — and scenarios built from facilitator-sourced notes are tagged `@facilitator`.
-Policies take an optional `condition`; read models take several readers in `actor_ids`.
+Policies take an optional `condition`, and a `trigger_time` instead of an event when
+time passing triggers them; read models take several readers in `actor_ids`.
+Aggregates and contexts take `preconditions`, emitted once as a Gherkin `Background`.
+`add_event` and `add_command` refuse a name that already exists unless
+`allow_duplicate` is passed.
 
 ### Glossary
 | Tool | Description |

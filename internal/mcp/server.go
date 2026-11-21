@@ -61,6 +61,8 @@ func New() *server.MCPServer {
 	s.AddTool(assignToAggregateTool(), handleAssignToAggregate)
 	s.AddTool(assignToContextTool(), handleAssignToContext)
 	s.AddTool(removeItemTool(), handleRemoveItem)
+	s.AddTool(mergeEventsTool(), handleMergeEvents)
+	s.AddTool(reopenHotSpotTool(), handleReopenHotSpot)
 
 	return s
 }
@@ -149,6 +151,7 @@ func addEventTool() libmcp.Tool {
 		libmcp.WithString("aggregate_id", libmcp.Description("ID of the aggregate this event belongs to")),
 		withEventPhrasing(),
 		withSource(),
+		withAllowDuplicate(),
 	)
 }
 
@@ -168,7 +171,7 @@ func handleAddEvent(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 		AggregateID:      req.GetString("aggregate_id", ""),
 		Phrasing:         req.GetString("phrasing", ""),
 		Source:           session.Source(req.GetString("source", "")),
-	})
+	}, addOptions(req)...)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
@@ -191,6 +194,7 @@ func addCommandTool() libmcp.Tool {
 		),
 		withCommandPhrasing(),
 		withSource(),
+		withAllowDuplicate(),
 	)
 }
 
@@ -211,7 +215,7 @@ func handleAddCommand(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 		Preconditions: req.GetStringSlice("preconditions", nil),
 		Phrasing:      req.GetString("phrasing", ""),
 		Source:        session.Source(req.GetString("source", "")),
-	})
+	}, addOptions(req)...)
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
@@ -256,7 +260,7 @@ func handleAddActor(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 
 func defineTermTool() libmcp.Tool {
 	return libmcp.NewTool("define_term",
-		libmcp.WithDescription("Add or update a glossary entry. If the term already exists it is updated in place. Returns the glossary term record."),
+		libmcp.WithDescription("Add or update a glossary entry. If the term already exists it is updated in place. Returns the term and alias_warnings: aliases that can't be linted reliably (Gherkin keywords, words inside another term's canonical phrasing, words the session already uses ordinarily). Relay those to the expert and drop or replace the alias."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("term",
 			libmcp.Required(),
@@ -292,7 +296,7 @@ func handleDefineTerm(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	_, gt, err := session.DefineTerm(
+	s, gt, err := session.DefineTerm(
 		sessionID, term, definition,
 		req.GetString("canonical_phrasing", ""),
 		req.GetString("context_id", ""),
@@ -302,7 +306,10 @@ func handleDefineTerm(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	return resultJSON(gt)
+	return resultJSON(map[string]any{
+		"term":           gt,
+		"alias_warnings": session.AliasWarnings(s, *gt),
+	})
 }
 
 func linkEventTool() libmcp.Tool {
@@ -395,7 +402,7 @@ func handleSetEventCondition(_ context.Context, req libmcp.CallToolRequest) (*li
 
 func resolveHotSpotTool() libmcp.Tool {
 	return libmcp.NewTool("resolve_hotspot",
-		libmcp.WithDescription("Mark a hot spot as resolved with the decision or answer that closed it."),
+		libmcp.WithDescription("Mark a hot spot as resolved with the decision or answer that closed it. If a later decision reverses it, use reopen_hotspot rather than opening a new hot spot."),
 		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
 		libmcp.WithString("hotspot_id", libmcp.Required(), libmcp.Description("ID of the hot spot to resolve")),
 		libmcp.WithString("resolution",
@@ -459,9 +466,10 @@ func addPolicyTool() libmcp.Tool {
 			libmcp.Description("Policy name (e.g. 'Notify warehouse on order placed')"),
 		),
 		libmcp.WithString("trigger_event_id", libmcp.Description("ID of the event that triggers this policy")),
+		libmcp.WithString("trigger_time", libmcp.Description("Instead of an event: the moment in time that triggers this policy, as a clause (e.g. 'a calendar month ends', 'a recurring entry falls due'). Emitted as the scenario's When. Don't invent an event for time passing.")),
 		libmcp.WithString("resulting_command_id", libmcp.Description("ID of the command this policy issues")),
 		libmcp.WithString("context_id", libmcp.Description("ID of the bounded context this policy belongs to")),
-		libmcp.WithString("condition", libmcp.Description("Optional condition under which the policy applies, beyond the trigger event (e.g. 'the assessment found no gaps')")),
+		libmcp.WithString("condition", libmcp.Description("Optional condition under which the policy applies, beyond the trigger (e.g. 'the assessment found no gaps')")),
 		libmcp.WithString("notes", libmcp.Description("Optional clarifying notes")),
 		withSource(),
 	)
@@ -476,15 +484,16 @@ func handleAddPolicy(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Cal
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}
-	_, p, err := session.AddPolicy(
-		sessionID, name,
-		req.GetString("notes", ""),
-		req.GetString("trigger_event_id", ""),
-		req.GetString("resulting_command_id", ""),
-		req.GetString("context_id", ""),
-		req.GetString("condition", ""),
-		session.Source(req.GetString("source", "")),
-	)
+	_, p, err := session.AddPolicy(sessionID, session.Policy{
+		Name:               name,
+		Notes:              req.GetString("notes", ""),
+		TriggerEventID:     req.GetString("trigger_event_id", ""),
+		TriggerTime:        req.GetString("trigger_time", ""),
+		ResultingCommandID: req.GetString("resulting_command_id", ""),
+		ContextID:          req.GetString("context_id", ""),
+		Condition:          req.GetString("condition", ""),
+		Source:             session.Source(req.GetString("source", "")),
+	})
 	if err != nil {
 		return libmcp.NewToolResultError(err.Error()), nil
 	}

@@ -39,8 +39,8 @@ If the expert prefers a different name, rename it in place with `update_event` o
 policies, read models, aggregates and contexts with their `update_*` tools.
 
 Two names for the same thing (`OrderCreated` and `OrderPlaced`) are a duplicate, not a
-synonym: keep one, move its links over (`link_event`, `assign_to_aggregate`), and
-delete the other with `remove_item`.
+synonym: keep one and fold the other in with `merge_events`. It moves policies and
+fills empty fields; settle any conflicts it reports with the expert.
 
 ---
 
@@ -59,7 +59,9 @@ For each cluster, ask the expert:
 
 "Do these all mean the same thing, or do they describe different situations?"
 
-- If they are the same: pick one canonical term, add the others as aliases
+- If they are the same: pick one canonical term, add the others as aliases. Read
+  `define_term`'s `alias_warnings` back to the expert — an alias that's a Gherkin
+  keyword or an everyday word in this domain will only produce lint noise
 - If they are different: define each separately
 
 ---

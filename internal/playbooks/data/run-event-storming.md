@@ -16,6 +16,11 @@ Nothing is permanent: `update_event`, `update_command`, `update_policy` and the 
 `update_*` tools fix names and notes, and `remove_item` deletes a note and reports what
 it was attached to. A sticky that turns out wrong is cheap; a stalled conversation isn't.
 
+**Keep it observable.** For each note, ask yourself: could the domain expert observe
+this happening? Streams, checkpoints, database transactions, retries and idempotency
+keys are how the system is built, not how it behaves — they belong in a design
+document, not the storm, or they'll end up in the specs.
+
 **Record where each note came from.** Pass `source: expert` for what the expert said
 and `source: facilitator` for anything you proposed that they confirmed. It costs the
 expert nothing, and the emitter tags facilitator-sourced scenarios `@facilitator` so
@@ -151,6 +156,10 @@ If the policy only applies in some cases ("whenever the assessment finishes *wit
 gaps*"), put that case in `condition` — e.g. `"the assessment found no gaps"` — rather
 than in the name. It becomes the policy scenario's `Given`.
 
+If the trigger is time passing ("whenever a calendar month ends", "when a recurring
+entry falls due"), pass it as `trigger_time` instead of `trigger_event_id`. Don't
+invent an event for time — it would need an aggregate, and time belongs to none.
+
 ### 2c — Read Models
 
 For each command, ask:
@@ -194,9 +203,10 @@ link_event(session_id, event_id, command_id)
 Most pairings are obvious from the names (`AccountOpened` ← `OpenAccount`,
 `PaymentFailed` ← `ProcessPayment`). Work through the event list systematically.
 
-**Important:** use `link_event` — do not re-add the event with `add_event`. Re-adding
-creates a duplicate with a new ID while the original remains in any aggregate that
-already references it, producing broken output at emission time.
+**Important:** use `link_event` — do not re-add the event with `add_event`. The server
+refuses an event or command whose name already exists, and the error names the
+existing one: that's a re-add caught, so link or update the existing note instead.
+Pass `allow_duplicate` only when the expert confirms two different things share a name.
 
 Some events have no clear command trigger — they represent background facts, time-based
 triggers, or external system inputs. Leave those unlinked; note them as hot spots if
@@ -233,6 +243,10 @@ Put the aggregate's invariant in `notes` as `Rule: …` — it is emitted as a G
 event turns up after clustering, add it with `assign_to_aggregate`; don't create a
 second aggregate with the same name.
 
+Ask: "Is there anything that must be true for *every* command on this aggregate?"
+("the accountant is signed in"). Record it once with `update_aggregate(preconditions)`
+— it's emitted as the feature's `Background` — and remove it from the commands.
+
 ### 3b — Bounded Contexts
 
 Ask:
@@ -248,7 +262,8 @@ propose_bounded_context(session_id, name, description, aggregate_ids)
 ```
 
 The server enforces: each aggregate belongs to exactly one bounded context. Add a
-late aggregate to an existing context with `assign_to_context`.
+late aggregate to an existing context with `assign_to_context`. A precondition that
+holds across the whole context goes in `update_bounded_context(preconditions)`.
 
 ### 3c — Ubiquitous Language
 
@@ -266,13 +281,19 @@ Ask:
 - "Does another context use this term on purpose?" → pass those contexts as
   `shared_with`, so the term isn't reported as leakage there
 
+`define_term` returns `alias_warnings` for aliases that can't be linted reliably — a
+Gherkin keyword like "scenario", a word inside another term's phrasing, an ordinary
+word the session already uses. Read them to the expert and drop or replace the alias.
+
 ---
 
 ## Wrap Up
 
 Summarise what was captured:
 - Events, commands, actors, policies, aggregates, bounded contexts, open hot spots
-- Read back each hot spot and ask if it can be resolved now
+- Read back each hot spot and ask if it can be resolved now. If a decision reverses
+  an earlier resolution, `reopen_hotspot` with the reason — don't open a new hot spot
+  that contradicts the old one
 - If you proposed anything, say how many notes are `source: facilitator` — they'll be
   tagged `@facilitator` in the specs
 

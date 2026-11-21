@@ -70,3 +70,27 @@ func TestRemoveItem_ReportsDetachments(t *testing.T) {
 		t.Errorf("result should report detachment %q:\n%s", want, text)
 	}
 }
+
+func TestDefineTerm_ReturnsAliasWarnings(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	res := call(t, handleDefineTerm, map[string]any{
+		"session_id": s.ID, "term": "Fantasy", "definition": "A what-if plan.", "aliases": []any{"scenario"},
+	})
+	text := res.Content[0].(libmcp.TextContent).Text
+	if res.IsError || !strings.Contains(text, "Gherkin keyword") {
+		t.Errorf("define_term should report alias warnings:\n%s", text)
+	}
+}
+
+func TestAddEvent_DuplicateIsToolError(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	call(t, handleAddEvent, map[string]any{"session_id": s.ID, "name": "AccountOpened"})
+	if res := call(t, handleAddEvent, map[string]any{"session_id": s.ID, "name": "AccountOpened"}); !res.IsError {
+		t.Error("expected a tool error for a duplicate name")
+	}
+	if res := call(t, handleAddEvent, map[string]any{"session_id": s.ID, "name": "AccountOpened", "allow_duplicate": true}); res.IsError {
+		t.Errorf("allow_duplicate should permit it: %+v", res.Content)
+	}
+}

@@ -65,7 +65,7 @@ func TestUpdatePolicyCondition(t *testing.T) {
 	s, _ := session.New("Factory", "")
 	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "CompletenessAssessed"})
 	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "DeclareArrival"})
-	_, pol, err := session.AddPolicy(s.ID, "Declare arrival", "", evt.ID, cmd.ID, "", "the assessment found no gaps", session.SourceExpert)
+	_, pol, err := session.AddPolicy(s.ID, session.Policy{Name: "Declare arrival", TriggerEventID: evt.ID, ResultingCommandID: cmd.ID, Condition: "the assessment found no gaps", Source: session.SourceExpert})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestUpdatePolicyCondition(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 
-	if _, _, err := session.AddPolicy(s.ID, "Bad", "", "evt_missing", "", "", "", ""); err == nil {
+	if _, _, err := session.AddPolicy(s.ID, session.Policy{Name: "Bad", TriggerEventID: "evt_missing"}); err == nil {
 		t.Error("expected error for unknown trigger event")
 	}
 }
@@ -185,7 +185,7 @@ func TestRemoveItemCascades(t *testing.T) {
 	_, actor, _ := session.AddActor(s.ID, "Customer", session.ActorTypePerson, "")
 	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "PlaceOrder", ActorID: actor.ID})
 	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "OrderPlaced", TriggerCommandID: cmd.ID})
-	_, pol, _ := session.AddPolicy(s.ID, "Reorder", "", evt.ID, cmd.ID, "", "", "")
+	_, pol, _ := session.AddPolicy(s.ID, session.Policy{Name: "Reorder", TriggerEventID: evt.ID, ResultingCommandID: cmd.ID})
 	_, rm, _ := session.AddReadModel(s.ID, "Order History", "", []string{actor.ID}, "", "")
 	_, agg, _ := session.ClusterAggregate(s.ID, "Order", "", "", []string{evt.ID}, []string{cmd.ID})
 	_, ctx, _ := session.ProposeContext(s.ID, "Sales", "", []string{agg.ID}, nil)
@@ -270,5 +270,141 @@ func TestImportSessionSyncPathOverride(t *testing.T) {
 	imported, _, _ = session.ImportSession(exported, &disabled)
 	if imported.SyncPath != "" {
 		t.Errorf("empty override should disable sync, got %q", imported.SyncPath)
+	}
+}
+
+func TestAddRefusesDuplicateNames(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "OpenAccount"})
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "AccountOpened"})
+
+	_, _, err := session.AddEvent(s.ID, session.Event{Name: "accountOpened", TriggerCommandID: cmd.ID})
+	if err == nil || !strings.Contains(err.Error(), evt.ID) || !strings.Contains(err.Error(), "link_event") {
+		t.Errorf("expected a duplicate error naming the existing event and link_event, got %v", err)
+	}
+	if _, _, err := session.AddCommand(s.ID, session.Command{Name: "OpenAccount"}); err == nil {
+		t.Error("expected a duplicate command error")
+	}
+	if _, _, err := session.AddEvent(s.ID, session.Event{Name: "AccountOpened"}, session.AllowDuplicate); err != nil {
+		t.Errorf("AllowDuplicate should permit it: %v", err)
+	}
+}
+
+func TestMergeEvents(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "ClosePeriod"})
+	_, other, _ := session.AddCommand(s.ID, session.Command{Name: "ArchivePeriod"})
+	// The original: clustered, with the old note. The re-add: linked, newer note.
+	_, orig, _ := session.AddEvent(s.ID, session.Event{Name: "PeriodClosed", Notes: "DEPRECATED: snapshots", TriggerCommandID: other.ID})
+	_, agg, _ := session.ClusterAggregate(s.ID, "Period", "", "", []string{orig.ID}, []string{cmd.ID})
+	_, dup, _ := session.AddEvent(s.ID, session.Event{Name: "PeriodClosed", Notes: "closes the books", TriggerCommandID: cmd.ID,
+		Phrasing: "the period is closed"}, session.AllowDuplicate)
+	_, pol, _ := session.AddPolicy(s.ID, session.Policy{Name: "Report on close", TriggerEventID: dup.ID, ResultingCommandID: other.ID})
+
+	_, kept, report, err := session.MergeEvents(s.ID, orig.ID, dup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Phrasing != "the period is closed" || kept.AggregateID != agg.ID {
+		t.Errorf("empty fields should be taken from the duplicate: %+v", kept)
+	}
+	if kept.TriggerCommandID != other.ID {
+		t.Errorf("on conflict the kept value wins: %+v", kept)
+	}
+	if kept.Notes != "DEPRECATED: snapshots\n\ncloses the books" {
+		t.Errorf("notes should be concatenated: %q", kept.Notes)
+	}
+	joined := strings.Join(report, "\n")
+	if !strings.Contains(joined, "trigger_command_id differs") || !strings.Contains(joined, "Report on close") {
+		t.Errorf("report should cover the conflict and the moved policy:\n%s", joined)
+	}
+	loaded, _ := session.Load(s.ID)
+	if len(loaded.Events) != 1 || loaded.Policies[0].TriggerEventID != orig.ID {
+		t.Errorf("duplicate should be gone and policy %s moved: events %d, trigger %s", pol.ID, len(loaded.Events), loaded.Policies[0].TriggerEventID)
+	}
+	if _, _, _, err := session.MergeEvents(s.ID, orig.ID, orig.ID); err == nil {
+		t.Error("expected error merging an event into itself")
+	}
+}
+
+func TestPolicyTriggerTime(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "CloseMonth"})
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "EntryPosted"})
+
+	_, pol, err := session.AddPolicy(s.ID, session.Policy{Name: "Close each month", TriggerTime: "a calendar month ends", ResultingCommandID: cmd.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := session.UpdatePolicy(s.ID, pol.ID, session.PolicyPatch{TriggerEventID: &evt.ID}); err == nil {
+		t.Error("expected error setting an event trigger on a time-triggered policy")
+	}
+	if _, _, err := session.AddPolicy(s.ID, session.Policy{Name: "Both", TriggerEventID: evt.ID, TriggerTime: "noon"}); err == nil {
+		t.Error("expected error for a policy with both triggers")
+	}
+}
+
+func TestReopenHotSpot(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	_, hs, _ := session.AddHotSpot(s.ID, "Do we need a Period aggregate?", "")
+	if _, _, err := session.ReopenHotSpot(s.ID, hs.ID, "x"); err == nil {
+		t.Error("expected error reopening an open hot spot")
+	}
+	session.ResolveHotSpot(s.ID, hs.ID, "No: snapshots replace it")
+	_, got, err := session.ReopenHotSpot(s.ID, hs.ID, "year-end close needs a period")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Resolved || got.Resolution != "" || len(got.History) != 1 ||
+		got.History[0].Resolution != "No: snapshots replace it" || got.History[0].ReopenedBecause != "year-end close needs a period" {
+		t.Errorf("got %+v", got)
+	}
+	_, got, _ = session.ResolveHotSpot(s.ID, hs.ID, "Yes, for year-end only")
+	if !got.Resolved || len(got.History) != 1 {
+		t.Errorf("resolving again should keep the history: %+v", got)
+	}
+}
+
+func TestAliasWarnings(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	session.AddEvent(s.ID, session.Event{Name: "EntryEdited", Notes: "the accountant can record and fix any entry"})
+	session.DefineTerm(s.ID, "Recurring Entry", "An entry that repeats.", "the recurring entry", "", nil, nil)
+	session.DefineTerm(s.ID, "Forecast", "A projection, an estimate of future balances.", "the forecast", "", nil, nil)
+	s2, term, _ := session.DefineTerm(s.ID, "Transaction", "Money moving between accounts.", "the transaction", "",
+		[]string{"scenario", "entry", "estimate", "fix", "transfer"}, nil)
+
+	joined := strings.Join(session.AliasWarnings(s2, *term), "\n")
+	for _, want := range []string{
+		`alias "scenario" is a Gherkin keyword`,
+		`alias "entry" occurs in "Recurring Entry"'s canonical phrasing`,
+		`alias "estimate" is used as an ordinary word in "Forecast"'s definition`,
+		`alias "fix" appears in 1 note(s)`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing warning %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, `"transfer"`) {
+		t.Errorf("a clean alias shouldn't warn:\n%s", joined)
+	}
+}
+
+func TestNegatesRejectsSharedPrecondition(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "PostEntry"})
+	_, evt, _ := session.AddEvent(s.ID, session.Event{Name: "EntryRefused", TriggerCommandID: cmd.ID})
+	_, agg, _ := session.ClusterAggregate(s.ID, "Ledger", "", "", []string{evt.ID}, []string{cmd.ID})
+	pre := []string{"the accountant is signed in"}
+	session.UpdateAggregate(s.ID, agg.ID, session.AggregatePatch{Preconditions: &pre})
+
+	_, _, err := session.SetEventCondition(s.ID, evt.ID, "the accountant is signed out", "the accountant is signed in")
+	if err == nil || !strings.Contains(err.Error(), "Background") {
+		t.Errorf("expected an error explaining the precondition is shared, got %v", err)
 	}
 }

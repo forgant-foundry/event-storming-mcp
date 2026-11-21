@@ -59,6 +59,7 @@ type Policy struct {
 	ID                 string    `json:"id"`
 	Name               string    `json:"name"`
 	TriggerEventID     string    `json:"trigger_event_id,omitempty"`
+	TriggerTime        string    `json:"trigger_time,omitempty"` // a moment in time that triggers the policy instead of an event, e.g. "a calendar month ends"
 	ResultingCommandID string    `json:"resulting_command_id,omitempty"`
 	ContextID          string    `json:"context_id,omitempty"`
 	Condition          string    `json:"condition,omitempty"` // the policy applies only when this holds, e.g. "the assessment found no gaps"
@@ -86,12 +87,20 @@ type ExternalSystem struct {
 }
 
 type HotSpot struct {
-	ID         string    `json:"id"`
-	Question   string    `json:"question"`
-	ContextID  string    `json:"context_id,omitempty"`
-	Resolved   bool      `json:"resolved"`
-	Resolution string    `json:"resolution,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string           `json:"id"`
+	Question   string           `json:"question"`
+	ContextID  string           `json:"context_id,omitempty"`
+	Resolved   bool             `json:"resolved"`
+	Resolution string           `json:"resolution,omitempty"`
+	History    []PastResolution `json:"history,omitempty"` // earlier resolutions, oldest first, each reopened
+	CreatedAt  time.Time        `json:"created_at"`
+}
+
+// PastResolution is a resolution that was later reopened.
+type PastResolution struct {
+	Resolution      string    `json:"resolution"`
+	ReopenedBecause string    `json:"reopened_because"`
+	ReopenedAt      time.Time `json:"reopened_at"`
 }
 
 type Aggregate struct {
@@ -100,6 +109,7 @@ type Aggregate struct {
 	ContextID         string    `json:"context_id,omitempty"`
 	CommandIDs        []string  `json:"command_ids,omitempty"`
 	EventIDs          []string  `json:"event_ids,omitempty"`
+	Preconditions     []string  `json:"preconditions,omitempty"` // hold for every command on this aggregate; emitted as Background
 	Notes             string    `json:"notes,omitempty"`
 	Deprecated        bool      `json:"deprecated,omitempty"`
 	DeprecationReason string    `json:"deprecation_reason,omitempty"`
@@ -112,6 +122,7 @@ type BoundedContext struct {
 	Description     string    `json:"description,omitempty"`
 	AggregateIDs    []string  `json:"aggregate_ids,omitempty"`
 	GlossaryTermIDs []string  `json:"glossary_term_ids,omitempty"`
+	Preconditions   []string  `json:"preconditions,omitempty"` // hold for every command in this context; emitted as Background
 	CreatedAt       time.Time `json:"created_at"`
 }
 

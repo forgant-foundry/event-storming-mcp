@@ -477,9 +477,9 @@ func buildFactorySession(t *testing.T) *session.Session {
 	_, ctx, _ := session.ProposeContext(s.ID, "Cell Judgment", "", []string{agg.ID}, nil)
 
 	// No context_id: resolved from the resulting command's aggregate.
-	session.AddPolicy(s.ID, "Convene on gap", "", gap.ID, convene.ID, "", "", "")
-	session.AddPolicy(s.ID, "Declare when complete", "", assessed.ID, declare.ID, ctx.ID, "the assessment found no gaps", session.SourceFacilitator)
-	session.AddPolicy(s.ID, "Dangling", "", assessed.ID, "", ctx.ID, "", "")
+	session.AddPolicy(s.ID, session.Policy{Name: "Convene on gap", TriggerEventID: gap.ID, ResultingCommandID: convene.ID})
+	session.AddPolicy(s.ID, session.Policy{Name: "Declare when complete", TriggerEventID: assessed.ID, ResultingCommandID: declare.ID, ContextID: ctx.ID, Condition: "the assessment found no gaps", Source: session.SourceFacilitator})
+	session.AddPolicy(s.ID, session.Policy{Name: "Dangling", TriggerEventID: assessed.ID, ContextID: ctx.ID})
 
 	session.AddReadModel(s.ID, "Completeness Ledger View", "", []string{director.ID, cell.ID}, ctx.ID, "")
 	session.AddHotSpot(s.ID, "Who decides a surface is covered?", ctx.ID)
@@ -703,7 +703,7 @@ func TestEmit_CrossAggregateAndStalePolicyWarnings(t *testing.T) {
 	_, overdrawn, _ := session.AddEvent(s.ID, session.Event{Name: "AccountOverdrafted", TriggerCommandID: record.ID})
 	session.ClusterAggregate(s.ID, "Transaction", "", "", []string{recorded.ID}, []string{record.ID})
 	session.ClusterAggregate(s.ID, "Account", "", "", []string{overdrawn.ID}, nil)
-	session.AddPolicy(s.ID, "Whenever TransferInitiated, then RecordTransaction", "", recorded.ID, record.ID, "", "", "")
+	session.AddPolicy(s.ID, session.Policy{Name: "Whenever TransferInitiated, then RecordTransaction", TriggerEventID: recorded.ID, ResultingCommandID: record.ID})
 
 	loaded, _ := session.Load(s.ID)
 	sum, err := gherkin.Emit(loaded, t.TempDir(), gherkin.Options{})
@@ -754,5 +754,59 @@ func TestEmit_LowerFirstKeepsAcronyms(t *testing.T) {
 	data, _ := os.ReadFile(sum.FeatureFiles[0])
 	if !strings.Contains(string(data), "    Given API is reachable\n    And ledger exists\n") {
 		t.Errorf("acronyms should keep their case; capitalised words are lowered:\n%s", data)
+	}
+}
+
+func TestEmit_BackgroundTimePoliciesAndDuplicates(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Ledger", "")
+	_, acct, _ := session.AddActor(s.ID, "Accountant", session.ActorTypeRole, "")
+	_, post, _ := session.AddCommand(s.ID, session.Command{Name: "PostEntry", ActorID: acct.ID,
+		Preconditions: []string{"the accountant is signed in", "the period is open"}})
+	_, posted, _ := session.AddEvent(s.ID, session.Event{Name: "EntryPosted", TriggerCommandID: post.ID})
+	_, closeCmd, _ := session.AddCommand(s.ID, session.Command{Name: "CloseMonth"})
+	_, closed, _ := session.AddEvent(s.ID, session.Event{Name: "MonthClosed", TriggerCommandID: closeCmd.ID})
+	session.AddEvent(s.ID, session.Event{Name: "EntryPosted"}, session.AllowDuplicate)
+	_, agg, _ := session.ClusterAggregate(s.ID, "Ledger", "", "", []string{posted.ID, closed.ID}, []string{post.ID, closeCmd.ID})
+	_, ctx, _ := session.ProposeContext(s.ID, "Bookkeeping", "", []string{agg.ID}, nil)
+	ctxPre := []string{"a ledger exists"}
+	session.UpdateContext(s.ID, ctx.ID, session.ContextPatch{Preconditions: &ctxPre})
+	aggPre := []string{"the accountant is signed in"}
+	session.UpdateAggregate(s.ID, agg.ID, session.AggregatePatch{Preconditions: &aggPre})
+	session.AddPolicy(s.ID, session.Policy{Name: "Close each month", TriggerTime: "A calendar month ends", ResultingCommandID: closeCmd.ID})
+
+	loaded, _ := session.Load(s.ID)
+	outDir := t.TempDir()
+	sum, err := gherkin.Emit(loaded, outDir, gherkin.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseFeatures(t, sum)
+
+	ledger, _ := os.ReadFile(filepath.Join(outDir, "bookkeeping", "ledger.feature"))
+	for _, want := range []string{
+		"  Background:\n    Given a ledger exists\n    And the accountant is signed in\n",
+		// The command's copy of the aggregate precondition is dropped.
+		"  Scenario: accountant posts an entry\n    Given the period is open\n    When",
+	} {
+		if !strings.Contains(string(ledger), want) {
+			t.Errorf("ledger.feature missing %q:\n%s", want, ledger)
+		}
+	}
+	policies, _ := os.ReadFile(filepath.Join(outDir, "bookkeeping", "policies.feature"))
+	for _, want := range []string{
+		"  Background:\n    Given a ledger exists\n",
+		"    When a calendar month ends\n    Then the system closes a month\n",
+	} {
+		if !strings.Contains(string(policies), want) {
+			t.Errorf("policies.feature missing %q:\n%s", want, policies)
+		}
+	}
+	if len(sum.Warnings) != 1 || !strings.Contains(sum.Warnings[0], `2 events share the name "EntryPosted"`) {
+		t.Errorf("expected one duplicate-name warning, got %v", sum.Warnings)
+	}
+	cm, _ := os.ReadFile(sum.ContextMapFile)
+	if !strings.Contains(string(cm), `"trigger_time": "A calendar month ends"`) || !strings.Contains(string(cm), `"preconditions": [`) {
+		t.Errorf("context map should carry trigger_time and preconditions:\n%s", cm)
 	}
 }

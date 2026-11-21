@@ -21,7 +21,8 @@ Before emitting, verify the session has:
 
 - [ ] Events linked to commands via `trigger_command_id` — use `link_event` to patch
   existing events **without re-adding them**. Re-adding creates a duplicate with a new
-  ID. If you have duplicates from a previous re-add, `remove_event` cleans them up.
+  ID. If the emit warns that events share a name, `merge_events` folds each duplicate
+  into the one to keep, moving its links and notes.
 - [ ] Commands assigned to aggregates via `cluster_aggregate`, or
   `assign_to_aggregate` for ones that turned up later
 - [ ] Aggregates assigned to bounded contexts via `propose_bounded_context` or
@@ -132,6 +133,14 @@ Give extra attention to:
 Wrong notes, aggregates or rules are fixed in the session, not in the file: the
 `update_*` tools, `remove_item`, and `update_aggregate` for a stale `Rule:` note.
 
+For every step, ask: could the expert observe this? A step about streams, retries or
+database transactions describes how the system is built, not how it behaves; rewrite
+it or remove the note it came from.
+
+If the same `Given` opens every scenario in a feature, move it to the aggregate's or
+context's `preconditions` (`update_aggregate` / `update_bounded_context`): it's emitted
+once as `Background`.
+
 ---
 
 ## Step 5 — Lint Step Text
@@ -195,10 +204,17 @@ The aggregate is empty. Either it was created speculatively and is not needed
 (`remove_item(kind: aggregate)`, or `deprecate_aggregate` to keep it visible), or the
 clustering step was skipped. Resolve with the expert.
 
-### "policy X needs both a trigger event and a resulting command"
+### "policy X needs a trigger (an event or a trigger_time) and a resulting command"
 
-Fix with `update_policy(trigger_event_id, resulting_command_id)`, or remove it if it
-was really a note about something else.
+Fix with `update_policy(trigger_event_id, resulting_command_id)` — or `trigger_time`
+if what triggers it is time passing — or remove it if it was really a note about
+something else.
+
+### "N events share the name X"
+
+A note was re-added instead of linked. For each, `merge_events(keep, remove)`: it
+moves policies and fills the kept event's empty fields from the duplicate, and reports
+any conflicts to settle with the expert.
 
 ### "policy X mentions Y, which is no longer an event or command name"
 

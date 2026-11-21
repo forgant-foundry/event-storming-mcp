@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -147,12 +148,29 @@ func ImportSession(srcPath string, syncPath *string) (*Session, string, error) {
 	return &s, originalID, nil
 }
 
+// AddOption changes how AddEvent and AddCommand treat their input.
+type AddOption int
+
+const (
+	// AllowDuplicate records the note even when one with the same name
+	// exists. Without it, a duplicate name is an error: it's almost always a
+	// re-add of an existing note, which should be edited or linked instead.
+	AllowDuplicate AddOption = iota + 1
+)
+
 // AddEvent records e as a new event. ID and CreatedAt are assigned; the
 // other fields are taken from e.
-func AddEvent(sessionID string, e Event) (*Session, *Event, error) {
+func AddEvent(sessionID string, e Event, opts ...AddOption) (*Session, *Event, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !slices.Contains(opts, AllowDuplicate) {
+		if i := slices.IndexFunc(s.Events, func(x Event) bool { return strings.EqualFold(x.Name, e.Name) }); i >= 0 {
+			return nil, nil, fmt.Errorf(
+				"event %q already exists (%s); change it with link_event, set_event_condition or update_event instead of re-adding it — or pass allow_duplicate if this really is a different event with the same name",
+				s.Events[i].Name, s.Events[i].ID)
+		}
 	}
 	if err := checkSource(e.Source); err != nil {
 		return nil, nil, err
@@ -171,10 +189,17 @@ func AddEvent(sessionID string, e Event) (*Session, *Event, error) {
 
 // AddCommand records c as a new command. ID and CreatedAt are assigned; the
 // other fields are taken from c.
-func AddCommand(sessionID string, c Command) (*Session, *Command, error) {
+func AddCommand(sessionID string, c Command, opts ...AddOption) (*Session, *Command, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if !slices.Contains(opts, AllowDuplicate) {
+		if i := slices.IndexFunc(s.Commands, func(x Command) bool { return strings.EqualFold(x.Name, c.Name) }); i >= 0 {
+			return nil, nil, fmt.Errorf(
+				"command %q already exists (%s); change it with update_command or assign_to_aggregate instead of re-adding it — or pass allow_duplicate if this really is a different command with the same name",
+				s.Commands[i].Name, s.Commands[i].ID)
+		}
 	}
 	if err := checkSource(c.Source); err != nil {
 		return nil, nil, err
@@ -234,6 +259,9 @@ func SetEventCondition(sessionID, eventID, condition, negates string) (*Session,
 					return nil, nil, fmt.Errorf("event %s has no trigger command, so there is no precondition to negate", eventID)
 				}
 				if !slices.Contains(s.Commands[ci].Preconditions, negates) {
+					if sharedPrecondition(s, s.Commands[ci], negates) {
+						return nil, nil, fmt.Errorf("%q is an aggregate- or context-wide precondition, emitted as Background for every scenario, so it can't be negated for one; move it onto command %s's preconditions first", negates, s.Commands[ci].Name)
+					}
 					return nil, nil, fmt.Errorf("negates must be one of command %s's preconditions, word for word: %q", s.Commands[ci].Name, s.Commands[ci].Preconditions)
 				}
 			}
@@ -314,28 +342,24 @@ func RemoveEvent(sessionID, eventID string) (*Session, error) {
 	return s, err
 }
 
-func AddPolicy(sessionID, name, notes, triggerEventID, resultingCommandID, contextID, condition string, source Source) (*Session, *Policy, error) {
+// AddPolicy records p as a new policy. ID and CreatedAt are assigned. A policy
+// is triggered by an event or by a moment in time, not both.
+func AddPolicy(sessionID string, p Policy) (*Session, *Policy, error) {
 	s, err := Load(sessionID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkSource(source); err != nil {
+	if err := checkSource(p.Source); err != nil {
 		return nil, nil, err
 	}
-	if err := s.checkRefs(KindEvent, triggerEventID, KindCommand, resultingCommandID, KindContext, contextID); err != nil {
+	if err := checkPolicyTrigger(p); err != nil {
 		return nil, nil, err
 	}
-	p := Policy{
-		ID:                 newID("pol"),
-		Name:               name,
-		Notes:              notes,
-		TriggerEventID:     triggerEventID,
-		ResultingCommandID: resultingCommandID,
-		ContextID:          contextID,
-		Condition:          condition,
-		Source:             source,
-		CreatedAt:          time.Now(),
+	if err := s.checkRefs(KindEvent, p.TriggerEventID, KindCommand, p.ResultingCommandID, KindContext, p.ContextID); err != nil {
+		return nil, nil, err
 	}
+	p.ID = newID("pol")
+	p.CreatedAt = time.Now()
 	s.Policies = append(s.Policies, p)
 	if err := Save(s); err != nil {
 		return nil, nil, err

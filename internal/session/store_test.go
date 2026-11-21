@@ -448,7 +448,7 @@ func TestAddPolicyReadModelHotSpot(t *testing.T) {
 	_, cmd, _ := session.AddCommand(s.ID, session.Command{Name: "CapturePayment"})
 	_, actor, _ := session.AddActor(s.ID, "Payment Gateway", session.ActorTypeExternalSystem, "")
 
-	_, pol, err := session.AddPolicy(s.ID, "Capture on authorise", "", evt.ID, cmd.ID, "", "", "")
+	_, pol, err := session.AddPolicy(s.ID, session.Policy{Name: "Capture on authorise", TriggerEventID: evt.ID, ResultingCommandID: cmd.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,5 +592,28 @@ func TestSetEventConditionNegates(t *testing.T) {
 	_, got, _ = session.SetEventCondition(s.ID, evt.ID, "", "")
 	if got.Condition != "" || got.Negates != "" {
 		t.Errorf("clearing the condition should clear negates: %+v", got)
+	}
+}
+
+func TestLintIgnoresMatchesInsideLongerTerms(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Factory", "")
+	_, judgment, _ := session.ProposeContext(s.ID, "Cell Judgment", "", nil, nil)
+	_, direction, _ := session.ProposeContext(s.ID, "Direction", "", nil, nil)
+	session.DefineTerm(s.ID, "Cell", "A group of agents.", "the cell", judgment.ID, nil, nil)
+	session.DefineTerm(s.ID, "Cell Agent", "An agent in a cell.", "the cell agent", judgment.ID, nil, nil)
+	session.DefineTerm(s.ID, "Recurring Entry", "A repeating entry.", "the recurring entry", direction.ID, nil, nil)
+	session.DefineTerm(s.ID, "Transaction", "Money moving.", "the transaction", direction.ID, []string{"entry"}, nil)
+	loaded, _ := session.Load(s.ID)
+
+	issues := session.LintStep(loaded, direction.ID, "the cell agent proposes a date")
+	if len(issues) != 1 || issues[0].Term != "Cell Agent" {
+		t.Errorf("only the longer term should be reported, got %+v", issues)
+	}
+	if issues := session.LintStep(loaded, direction.ID, "the recurring entry falls due"); len(issues) != 0 {
+		t.Errorf("alias inside another term's phrasing should not be flagged, got %+v", issues)
+	}
+	if issues := session.LintStep(loaded, direction.ID, "the entry is posted"); len(issues) != 1 || issues[0].Type != "alias" {
+		t.Errorf("a standalone alias is still flagged, got %+v", issues)
 	}
 }
