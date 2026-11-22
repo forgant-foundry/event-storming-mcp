@@ -242,7 +242,8 @@ and how it checks it.
    session doesn't load story-map tools, and vice versa.
 
    The rename touches:
-   - forglet: `.forglet.yml`'s `name`, which names the delivered binary;
+   - releases: GoReleaser builds `./cmd/forgant-discovery` as `forgant-discovery`
+     (the repo moved off forglet to plain Go and GitHub tooling);
    - `cmd/`: the root command, plus a `serve` parent with `events` and `stories`
      children;
    - every `.mcp.json` that runs the server today: forgant-factory, finant-api

@@ -13,7 +13,7 @@ renamed.
 
 ```
 cmd/forgant-discovery/
-  main.go       entry point (forglet's github.delivery.main)
+  main.go       entry point; releases build this with GoReleaser
 
 internal/
   cli/
@@ -335,3 +335,17 @@ make test
 ```
 
 Tests use `t.Setenv("XDG_DATA_HOME", t.TempDir())` to isolate session storage.
+
+## CI and Releases
+
+Plain Go and GitHub, hand-maintained:
+
+- `.github/workflows/ci.yml` runs on pushes to main and on pull requests: gofmt,
+  `go mod tidy -diff`, `go vet`, `go test -race`, and govulncheck. It uses the
+  latest stable Go; `go.mod`'s `go` line is only the minimum.
+- `.github/workflows/release.yml` runs on a pushed `v*` tag and publishes
+  binaries for linux, darwin and windows (amd64 and arm64) with GoReleaser
+  (`.goreleaser.yaml`). Release by tagging: `git tag v0.7.0 && git push origin v0.7.0`.
+- The version the server reports comes from Go's build info, which Go stamps from
+  the tag when building a clean tagged checkout; `go install …@v0.7.0` gets it too.
+- `.github/dependabot.yml` updates Go modules and Actions weekly.

@@ -45,6 +45,11 @@ make install
 
 Or `make build` to produce `./bin/forgant-discovery` without installing.
 
+Release binaries for linux, macOS and Windows are attached to each
+[GitHub release](https://github.com/forgant-foundry/event-storming-mcp/releases).
+Releases are cut by pushing a `v*` tag; CI runs gofmt, vet, race-enabled tests and
+govulncheck on every push and pull request.
+
 ## Setup
 
 ### Claude Desktop
