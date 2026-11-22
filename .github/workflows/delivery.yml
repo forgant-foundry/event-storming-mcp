@@ -30,19 +30,19 @@ jobs:
                 LDFLAGS="-s -w"
                 mkdir -p dist
 
-                GOOS=linux  GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/event-storming-mcp .
-                tar czf "dist/event-storming-mcp_${SEM}_linux_amd64.tar.gz" -C /tmp event-storming-mcp
+                GOOS=linux  GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/forgant-discovery ./cmd/forgant-discovery
+                tar czf "dist/forgant-discovery_${SEM}_linux_amd64.tar.gz" -C /tmp forgant-discovery
 
-                GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/event-storming-mcp .
-                tar czf "dist/event-storming-mcp_${SEM}_darwin_amd64.tar.gz" -C /tmp event-storming-mcp
+                GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/forgant-discovery ./cmd/forgant-discovery
+                tar czf "dist/forgant-discovery_${SEM}_darwin_amd64.tar.gz" -C /tmp forgant-discovery
 
-                GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o /tmp/event-storming-mcp .
-                tar czf "dist/event-storming-mcp_${SEM}_darwin_arm64.tar.gz" -C /tmp event-storming-mcp
+                GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o /tmp/forgant-discovery ./cmd/forgant-discovery
+                tar czf "dist/forgant-discovery_${SEM}_darwin_arm64.tar.gz" -C /tmp forgant-discovery
 
-                GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/event-storming-mcp.exe .
-                cd /tmp && zip "${GITHUB_WORKSPACE}/dist/event-storming-mcp_${SEM}_windows_amd64.zip" event-storming-mcp.exe && cd -
+                GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/forgant-discovery.exe ./cmd/forgant-discovery
+                cd /tmp && zip "${GITHUB_WORKSPACE}/dist/forgant-discovery_${SEM}_windows_amd64.zip" forgant-discovery.exe && cd -
 
-                cd dist && sha256sum *.tar.gz *.zip > "event-storming-mcp_${SEM}_checksums.txt"
+                cd dist && sha256sum *.tar.gz *.zip > "forgant-discovery_${SEM}_checksums.txt"
             - env:
                 GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               if: startsWith(steps.version.outputs.tag, 'v')

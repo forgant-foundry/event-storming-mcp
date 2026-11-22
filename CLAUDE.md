@@ -1,20 +1,34 @@
-# event-storming-mcp — Architecture
+# forgant-discovery — Architecture
 
-MCP server that facilitates event storming workshops. The LLM drives the conversation;
-the server owns the grammar (event storming stencil + Gherkin emission) and durable
-state.
+One binary, `forgant-discovery`, with two MCP servers that share a session:
+`serve events` facilitates event storming, and `serve stories` facilitates story
+mapping linked to the storm. The LLM drives the conversation; the servers own the
+grammar (event storming stencil, story map, Gherkin emission) and durable state.
+The story-mapping design, with its sources and phases, is `docs/story-mapping.md`.
+
+The repo and Go module are still `event-storming-mcp`; only the executable is
+renamed.
 
 ## Package Layout
 
 ```
-cmd/
-  root.go       cobra root command
-  serve.go      "serve" subcommand — starts MCP server over stdio
+cmd/forgant-discovery/
+  main.go       entry point (forglet's github.delivery.main)
 
 internal/
+  cli/
+    root.go     cobra root command
+    serve.go    "serve events" and "serve stories" — each an MCP server over stdio
+
   session/
-    types.go    All domain types: Event, Command, Actor, Policy, ReadModel,
+    types.go    All storm types: Event, Command, Actor, Policy, ReadModel,
                 ExternalSystem, HotSpot, Aggregate, BoundedContext, GlossaryTerm, Session
+    storymap.go Story-map types: StoryMap, Frame, Role, Activity, Step, Story,
+                Screen, Offer, Slice (Session.StoryMap)
+    storymap_store.go  SetFrame, Add*/Update* for each story-map type,
+                AssignToSlice, MoveItem; story-map removal and storm cascades
+    storymap_check.go  CheckLinks — the story map against the storm, both ways
+    lock_unix.go / lock_other.go  flock around Save (no-op where unavailable)
     store.go    JSON-on-disk persistence ($XDG_DATA_HOME/event-storming-mcp/<id>/session.json)
                 Mutation functions: New, Load, Save, SetSyncPath, ExportSession,
                 ImportSession, AddEvent, AddCommand, AddActor, SetEventCondition,
@@ -40,17 +54,20 @@ internal/
       run-event-storming.md
       extract-ubiquitous-language.md
       emit-gherkin-specs.md
+      map-the-users-story.md     (stories server)
 
   mcp/
-    server.go   Session, capture, clustering, emission, portability and playbook
-                tools; server version comes from Go build info (VCS tag), "dev"
-                when unavailable
-    edit.go     update_*, assign_to_*, remove_item, merge_events, reopen_hotspot;
-                optString/optStrings helpers
-                that tell an omitted argument from an empty one
-
-main.go
+    server.go   New() — the events server; addSharedTools() — sessions, glossary,
+                hot spots, remove_item, portability and per-server playbooks,
+                registered by both servers; version from Go build info
+    edit.go     update_*, assign_to_*, merge_events, remove_item, reopen_hotspot;
+                optString/optStrings helpers that tell an omitted argument from
+                an empty one
+    stories.go  NewStories() — the stories server and its tools
 ```
+
+Each playbook names its server; `list_playbooks` and `get_playbook` serve only the
+server's own.
 
 ## Session Storage
 
@@ -66,6 +83,12 @@ The file contains the entire session graph in a single document. There is no dat
 
 If `Session.SyncPath` is set (via `start_session(sync_path)` or `set_sync_path`), every
 `Save` also writes the same JSON to that project-local path.
+
+The data directory keeps the name `event-storming-mcp` so existing sessions stay
+where they are. Both servers write the same file, so `Save` is revision-checked:
+it takes an exclusive lock on `session.json.lock`, refuses (`ErrConflict`) if the
+file's `revision` has moved on since this copy was loaded, then writes the next
+revision. A refused save surfaces as a tool error to retry.
 
 ## ID Scheme
 
@@ -83,12 +106,21 @@ All IDs are `prefix_<8 random hex bytes>`:
 | `agg_` | Aggregate |
 | `ctx_` | BoundedContext |
 | `term_` | GlossaryTerm |
+| `role_` | Role |
+| `actv_` | Activity |
+| `step_` | Step |
+| `sty_` | Story |
+| `scr_` | Screen |
+| `slc_` | Slice |
 
-## MCP Tools (35 total)
+## Events server tools (35)
+
+`forgant-discovery serve events`. The tools marked *shared* are also on the stories
+server.
 
 ### Session management
-- `start_session(name, description, sync_path?)` → session_id
-- `resume_session(session_id)` → full Session
+- `start_session(name, description, sync_path?)` → session_id *(shared)*
+- `resume_session(session_id)` → full Session *(shared)*
 
 ### Sticky note capture
 - `add_event(session_id, name, notes?, trigger_command_id?, aggregate_id?, phrasing?, source?, allow_duplicate?)`
@@ -107,15 +139,15 @@ When step including the actor, and the scenario title).
 `source` is expert | facilitator | imported. Facilitator-sourced commands/events emit
 their scenarios tagged `@facilitator` (provenance — the expert confirmed them; it
 doesn't mean unconfirmed).
-- `add_hot_spot(session_id, question, context_id?)`
+- `add_hot_spot(session_id, question, context_id?)` *(shared)*
 
 ### Refinement
 - `link_event(session_id, event_id, command_id)` — set trigger_command_id in place (no duplicate)
 - `remove_event(session_id, event_id)` — same as `remove_item(kind=event)`
 - `set_event_condition(session_id, event_id, condition, negates?)` — conditional/rejection
   event; `negates` is the trigger command's precondition it contradicts, word for word
-- `resolve_hotspot(session_id, hotspot_id, resolution)`
-- `reopen_hotspot(session_id, hotspot_id, reason)` — moves the resolution into `history`
+- `resolve_hotspot(session_id, hotspot_id, resolution)` *(shared)*
+- `reopen_hotspot(session_id, hotspot_id, reason)` — moves the resolution into `history` *(shared)*
 - `deprecate_aggregate(session_id, aggregate_id, reason?)`
 
 ### Editing
@@ -131,18 +163,18 @@ array replaces the whole list.
   — aggregate/context preconditions are emitted as `Background`
 - `assign_to_aggregate(session_id, aggregate_id, event_ids?, command_ids?, move?)`
 - `assign_to_context(session_id, context_id, aggregate_ids?, glossary_term_ids?, move?)`
-- `remove_item(session_id, kind, id)` → { removed, kind, detached } — cascades: clears
+- `remove_item(session_id, kind, id)` → { removed, kind, detached } — cascades: clears *(shared)*
   every reference to the removed record and reports each one
 - `merge_events(session_id, keep_event_id, remove_event_id)` → { event, removed, report }
   — moves policies, fills keep's empty fields from remove, concatenates notes, reports
   conflicts (keep wins)
 
 ### Glossary
-- `define_term(session_id, term, definition, canonical_phrasing?, aliases?, context_id?, shared_with?)`
+- `define_term(session_id, term, definition, canonical_phrasing?, aliases?, context_id?, shared_with?)` *(shared)*
   → { term, alias_warnings } — warns about aliases that are Gherkin keywords, sit
   inside another term's canonical phrasing, or appear in definitions or notes
   — `shared_with` lists contexts that use the term on purpose; lint_steps won't flag it there
-- `lint_steps(session_id, step_text, context_id?)` → { clean, issues }
+- `lint_steps(session_id, step_text, context_id?)` → { clean, issues } *(shared)*
 
 ### Clustering
 - `cluster_aggregate(session_id, name, event_ids?, command_ids?, context_id?)` — enforces one-aggregate-per-event
@@ -154,14 +186,51 @@ array replaces the whole list.
   `only` is any of features | glossary | context_map
 
 ### Portability
-- `export_session(session_id, path)` — write session JSON verbatim
-- `import_session(path, sync_path?)` → new session_id (original ID is replaced to avoid
+- `export_session(session_id, path)` — write session JSON verbatim *(shared)*
+- `import_session(path, sync_path?)` → new session_id (original ID is replaced to avoid *(shared)*
   collisions); `sync_path` overrides the file's own before the first save
-- `set_sync_path(session_id, path)` — empty path disables syncing
+- `set_sync_path(session_id, path)` — empty path disables syncing *(shared)*
 
 ### Playbooks
-- `list_playbooks()` → [{ slug, title, description }]
-- `get_playbook(slug)` → markdown facilitation script
+- `list_playbooks()` → [{ slug, title, description }] *(shared)*
+- `get_playbook(slug)` → markdown facilitation script *(shared)*
+
+## Stories server tools (29)
+
+`forgant-discovery serve stories`: the 13 shared tools (`start_session`,
+`resume_session`, `define_term`, `lint_steps`, `add_hot_spot`, `resolve_hotspot`,
+`reopen_hotspot`, `remove_item`, `export_session`, `import_session`,
+`set_sync_path`, `list_playbooks`, `get_playbook`) plus:
+
+- `frame_story_map(session_id, for_whom?, problems?, today?, solution_ideas?, why?, success_measures?)`
+- `add_role(session_id, actor_id? | actor_name?, actor_type?, goal?, frequency?, expertise?, persona?, source?)`
+  — a role is a storm actor; `actor_name` creates it; one role per actor
+- `update_role(session_id, role_id, goal?, frequency?, expertise?, persona?, source?)`
+- `add_activity(session_id, name, role_id?, notes?, before_id?, source?)` / `update_activity`
+- `add_step(session_id, activity_id, role_id, name, command_ids?, read_model_ids?, screen_id?, after_step_id?, notes?, before_id?, source?)` / `update_step`
+  — `after_step_id` is a hand-off: another role's step this one waits for
+- `add_story(session_id, step_id, title, why?, kind?, slice_id?, event_id?, notes?, before_id?, source?)` / `update_story`
+  — kind: detail (default) | alternative | failure | misuse | spike
+- `add_screen(session_id, name, shows?, offers?: [{command_id, shows_after?}], notes?, source?)` / `update_screen`
+- `add_slice(session_id, name, kind, outcome?, walking_skeleton?, notes?, before_id?)` / `update_slice`
+  — kind: release | learning | development; at most one walking skeleton, a development slice
+- `assign_to_slice(session_id, slice_id, story_ids)`
+- `move_item(session_id, kind, id, before_id?)` — activity | step | story | slice
+- `check_links(session_id)` → { clean, counts, findings }
+
+List order is meaningful: activities and steps are narrative order (steps within
+their activity), stories are rank order within their step, slices are top to
+bottom. `remove_item` takes the story-map kinds too: removing an activity with
+steps or a step with stories is refused; other references are cleared. Removing
+a storm actor, command, read model or event detaches it from roles, steps,
+screens and stories.
+
+`CheckLinks` warns about a step with no command or read model, a step with no
+role, a screen offering a command with no linked events, and a step using a
+command its screen doesn't offer. It notes commands no step uses and no policy
+issues (once the map has steps), read models no screen shows (once there are
+screens), and roles with no steps. It lints activity, step, story and screen text
+against the glossary.
 
 ## Validation Invariants
 
@@ -243,17 +312,20 @@ Aggregates with no commands produce a stub scenario with `# TODO` comments.
 
 ## Adding a New Tool
 
-1. Add a mutation function to `internal/session/store.go` (or a query-only function
-   if no state change is needed)
-2. Add a tool definition function and handler to `internal/mcp/server.go`
-3. Register the tool in `New()` in `server.go`
+1. Add a mutation function to `internal/session/store.go` (storm) or
+   `storymap_store.go` (story map), or a query-only function if no state changes
+2. Add a tool definition function and handler to `internal/mcp/` (`server.go` /
+   `edit.go` for the storm, `stories.go` for the story map)
+3. Register it in `New()`, `NewStories()`, or `addSharedTools()` for both
 4. Add tests in the relevant `_test.go` file
 
 ## Running Locally
 
 ```sh
 make build
-./bin/event-storming-mcp serve   # starts MCP server on stdio
+./bin/forgant-discovery serve events    # event storming over stdio
+./bin/forgant-discovery serve stories   # story mapping over stdio
+make install                            # go install ./cmd/forgant-discovery
 ```
 
 ## Tests

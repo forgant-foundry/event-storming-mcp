@@ -1,4 +1,5 @@
-package cmd
+// Package cli is the forgant-discovery command line.
+package cli
 
 import (
 	"fmt"
@@ -8,8 +9,8 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "event-storming-mcp",
-	Short: "MCP server for event storming facilitation",
+	Use:   "forgant-discovery",
+	Short: "MCP servers for product discovery: event storming and story mapping",
 }
 
 func Execute() {

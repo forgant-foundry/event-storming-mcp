@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -615,5 +616,37 @@ func TestLintIgnoresMatchesInsideLongerTerms(t *testing.T) {
 	}
 	if issues := session.LintStep(loaded, direction.ID, "the entry is posted"); len(issues) != 1 || issues[0].Type != "alias" {
 		t.Errorf("a standalone alias is still flagged, got %+v", issues)
+	}
+}
+
+// TestSaveRefusesStaleCopy simulates the events and stories servers loading
+// the same session and saving in turn: the second save must not silently
+// overwrite the first.
+func TestSaveRefusesStaleCopy(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	s, _ := session.New("Shared", "")
+
+	a, _ := session.Load(s.ID)
+	b, _ := session.Load(s.ID)
+	a.Description = "written by events"
+	if err := session.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	b.Description = "written by stories"
+	err := session.Save(b)
+	if !errors.Is(err, session.ErrConflict) {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+	loaded, _ := session.Load(s.ID)
+	if loaded.Description != "written by events" {
+		t.Errorf("first write was lost: %q", loaded.Description)
+	}
+	// A fresh load can save again, and saving twice from one copy is fine.
+	loaded.Description = "retried"
+	if err := session.Save(loaded); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Save(loaded); err != nil {
+		t.Errorf("a second save from the same copy should succeed: %v", err)
 	}
 }

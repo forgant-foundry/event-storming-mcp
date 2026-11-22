@@ -1,4 +1,4 @@
-name: event-storming-mcp
+name: forgant-discovery
 template: go
 module: "github.com/forgant-foundry/event-storming-mcp"
 require:
@@ -18,3 +18,4 @@ github:
   ci: true
   delivery:
     kind: binary
+    main: ./cmd/forgant-discovery

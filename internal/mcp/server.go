@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"slices"
+	"strings"
 
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -24,32 +25,23 @@ func version() string {
 	return "dev"
 }
 
+// New builds the event storming server ("serve events").
 func New() *server.MCPServer {
-	s := server.NewMCPServer("event-storming-mcp", version())
+	s := server.NewMCPServer("forgant-discovery-events", version())
+	addSharedTools(s, playbooks.ServerEvents)
 
-	s.AddTool(startSessionTool(), handleStartSession)
-	s.AddTool(resumeSessionTool(), handleResumeSession)
 	s.AddTool(addEventTool(), handleAddEvent)
 	s.AddTool(addCommandTool(), handleAddCommand)
 	s.AddTool(addActorTool(), handleAddActor)
 	s.AddTool(linkEventTool(), handleLinkEvent)
 	s.AddTool(removeEventTool(), handleRemoveEvent)
 	s.AddTool(setEventConditionTool(), handleSetEventCondition)
-	s.AddTool(resolveHotSpotTool(), handleResolveHotSpot)
 	s.AddTool(deprecateAggregateTool(), handleDeprecateAggregate)
 	s.AddTool(addPolicyTool(), handleAddPolicy)
 	s.AddTool(addReadModelTool(), handleAddReadModel)
-	s.AddTool(addHotSpotTool(), handleAddHotSpot)
-	s.AddTool(defineTermTool(), handleDefineTerm)
 	s.AddTool(clusterAggregateTool(), handleClusterAggregate)
 	s.AddTool(proposeContextTool(), handleProposeContext)
 	s.AddTool(emitGherkinTool(), handleEmitGherkin)
-	s.AddTool(lintStepsTool(), handleLintSteps)
-	s.AddTool(listPlaybooksTool(), handleListPlaybooks)
-	s.AddTool(getPlaybookTool(), handleGetPlaybook)
-	s.AddTool(exportSessionTool(), handleExportSession)
-	s.AddTool(importSessionTool(), handleImportSession)
-	s.AddTool(setSyncPathTool(), handleSetSyncPath)
 
 	s.AddTool(updateEventTool(), handleUpdateEvent)
 	s.AddTool(updateCommandTool(), handleUpdateCommand)
@@ -60,11 +52,27 @@ func New() *server.MCPServer {
 	s.AddTool(updateContextTool(), handleUpdateContext)
 	s.AddTool(assignToAggregateTool(), handleAssignToAggregate)
 	s.AddTool(assignToContextTool(), handleAssignToContext)
-	s.AddTool(removeItemTool(), handleRemoveItem)
 	s.AddTool(mergeEventsTool(), handleMergeEvents)
-	s.AddTool(reopenHotSpotTool(), handleReopenHotSpot)
 
 	return s
+}
+
+// addSharedTools registers the tools both servers offer: sessions, the
+// glossary, hot spots, removal, portability, and the server's own playbooks.
+func addSharedTools(s *server.MCPServer, playbookServer string) {
+	s.AddTool(startSessionTool(), handleStartSession)
+	s.AddTool(resumeSessionTool(), handleResumeSession)
+	s.AddTool(defineTermTool(), handleDefineTerm)
+	s.AddTool(lintStepsTool(), handleLintSteps)
+	s.AddTool(addHotSpotTool(), handleAddHotSpot)
+	s.AddTool(resolveHotSpotTool(), handleResolveHotSpot)
+	s.AddTool(reopenHotSpotTool(), handleReopenHotSpot)
+	s.AddTool(removeItemTool(), handleRemoveItem)
+	s.AddTool(exportSessionTool(), handleExportSession)
+	s.AddTool(importSessionTool(), handleImportSession)
+	s.AddTool(setSyncPathTool(), handleSetSyncPath)
+	s.AddTool(listPlaybooksTool(), listPlaybooksHandler(playbookServer))
+	s.AddTool(getPlaybookTool(playbookServer), getPlaybookHandler(playbookServer))
 }
 
 func resultJSON(v any) (*libmcp.CallToolResult, error) {
@@ -730,30 +738,38 @@ func listPlaybooksTool() libmcp.Tool {
 	)
 }
 
-func handleListPlaybooks(_ context.Context, _ libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
-	return resultJSON(playbooks.All())
+func listPlaybooksHandler(srv string) server.ToolHandlerFunc {
+	return func(_ context.Context, _ libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+		return resultJSON(playbooks.ForServer(srv))
+	}
 }
 
-func getPlaybookTool() libmcp.Tool {
+func getPlaybookTool(srv string) libmcp.Tool {
+	var slugs []string
+	for _, p := range playbooks.ForServer(srv) {
+		slugs = append(slugs, p.Slug)
+	}
 	return libmcp.NewTool("get_playbook",
 		libmcp.WithDescription("Return the full facilitation script for a playbook as markdown."),
 		libmcp.WithString("slug",
 			libmcp.Required(),
-			libmcp.Description("Playbook slug (from list_playbooks): run-event-storming | extract-ubiquitous-language | emit-gherkin-specs"),
+			libmcp.Description("Playbook slug (from list_playbooks): "+strings.Join(slugs, " | ")),
 		),
 	)
 }
 
-func handleGetPlaybook(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
-	slug, err := req.RequireString("slug")
-	if err != nil {
-		return libmcp.NewToolResultError(err.Error()), nil
+func getPlaybookHandler(srv string) server.ToolHandlerFunc {
+	return func(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+		slug, err := req.RequireString("slug")
+		if err != nil {
+			return libmcp.NewToolResultError(err.Error()), nil
+		}
+		p, ok := playbooks.GetForServer(srv, slug)
+		if !ok {
+			return libmcp.NewToolResultError(fmt.Sprintf("playbook %q not found on this server; call list_playbooks to see available slugs", slug)), nil
+		}
+		return libmcp.NewToolResultText(p.Content), nil
 	}
-	p, ok := playbooks.Get(slug)
-	if !ok {
-		return libmcp.NewToolResultError(fmt.Sprintf("playbook %q not found; call list_playbooks to see available slugs", slug)), nil
-	}
-	return libmcp.NewToolResultText(p.Content), nil
 }
 
 func exportSessionTool() libmcp.Tool {

@@ -139,12 +139,17 @@ type GlossaryTerm struct {
 }
 
 type Session struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	SyncPath    string    `json:"sync_path,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	SyncPath    string `json:"sync_path,omitempty"`
+	// Revision counts saves. Save refuses to overwrite a file whose revision
+	// has moved on since this copy was loaded, which is how the events and
+	// stories servers avoid losing each other's writes to one session.
+	Revision       int `json:"revision"`
+	loadedRevision int
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 
 	Events          []Event          `json:"events"`
 	Commands        []Command        `json:"commands"`
@@ -156,4 +161,6 @@ type Session struct {
 	Aggregates      []Aggregate      `json:"aggregates"`
 	BoundedContexts []BoundedContext `json:"bounded_contexts"`
 	Glossary        []GlossaryTerm   `json:"glossary"`
+
+	StoryMap *StoryMap `json:"story_map,omitempty"`
 }

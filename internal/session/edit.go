@@ -23,6 +23,7 @@ const (
 var Kinds = []string{
 	KindEvent, KindCommand, KindActor, KindPolicy, KindReadModel,
 	KindHotSpot, KindAggregate, KindContext, KindTerm,
+	KindRole, KindActivity, KindStep, KindStory, KindScreen, KindSlice,
 }
 
 // has reports whether a record of the given kind and ID exists.
@@ -46,6 +47,22 @@ func (s *Session) has(kind, id string) bool {
 		return slices.ContainsFunc(s.BoundedContexts, func(c BoundedContext) bool { return c.ID == id })
 	case KindTerm:
 		return slices.ContainsFunc(s.Glossary, func(t GlossaryTerm) bool { return t.ID == id })
+	}
+	if m := s.StoryMap; m != nil {
+		switch kind {
+		case KindRole:
+			return slices.ContainsFunc(m.Roles, func(r Role) bool { return r.ID == id })
+		case KindActivity:
+			return slices.ContainsFunc(m.Activities, func(a Activity) bool { return a.ID == id })
+		case KindStep:
+			return slices.ContainsFunc(m.Steps, func(st Step) bool { return st.ID == id })
+		case KindStory:
+			return slices.ContainsFunc(m.Stories, func(st Story) bool { return st.ID == id })
+		case KindScreen:
+			return slices.ContainsFunc(m.Screens, func(sc Screen) bool { return sc.ID == id })
+		case KindSlice:
+			return slices.ContainsFunc(m.Slices, func(sl Slice) bool { return sl.ID == id })
+		}
 	}
 	return false
 }
@@ -494,6 +511,16 @@ func RemoveItem(sessionID, kind, id string) (*Session, []string, error) {
 		}
 	}
 
+	if isStoryMapKind(kind) {
+		if err := s.removeStoryMapItem(kind, id, &detached); err != nil {
+			return nil, nil, err
+		}
+		if err := Save(s); err != nil {
+			return nil, nil, err
+		}
+		return s, detached, nil
+	}
+
 	switch kind {
 	case KindEvent:
 		s.Events = slices.DeleteFunc(s.Events, func(e Event) bool { return e.ID == id })
@@ -573,6 +600,7 @@ func RemoveItem(sessionID, kind, id string) (*Session, []string, error) {
 	case KindTerm:
 		s.Glossary = slices.DeleteFunc(s.Glossary, func(t GlossaryTerm) bool { return t.ID == id })
 	}
+	s.cascadeIntoStoryMap(kind, id, &detached)
 
 	if err := Save(s); err != nil {
 		return nil, nil, err

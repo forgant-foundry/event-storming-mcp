@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,16 +66,35 @@ func Load(id string) (*Session, error) {
 		return nil, fmt.Errorf("corrupt session %s: %w", id, err)
 	}
 	reconcile(&s)
+	s.loadedRevision = s.Revision
 	return &s, nil
 }
+
+// ErrConflict is returned by Save when the session file was saved by another
+// process after this copy was loaded.
+var ErrConflict = errors.New("session was changed by another server since it was loaded; repeat the call")
 
 func Save(s *Session) error {
 	path := sessionPath(s.ID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	unlock, err := lockFile(path + ".lock")
+	if err != nil {
+		return fmt.Errorf("lock session: %w", err)
+	}
+	defer unlock()
+	if onDisk, err := os.ReadFile(path); err == nil {
+		var head struct {
+			Revision int `json:"revision"`
+		}
+		if json.Unmarshal(onDisk, &head) == nil && head.Revision != s.loadedRevision {
+			return fmt.Errorf("%w (revision %d on disk, %d loaded)", ErrConflict, head.Revision, s.loadedRevision)
+		}
+	}
 	reconcile(s)
 	s.UpdatedAt = time.Now()
+	s.Revision = s.loadedRevision + 1
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
@@ -82,6 +102,7 @@ func Save(s *Session) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return err
 	}
+	s.loadedRevision = s.Revision
 	if s.SyncPath != "" {
 		if err := os.MkdirAll(filepath.Dir(s.SyncPath), 0o755); err != nil {
 			return fmt.Errorf("sync path mkdir: %w", err)

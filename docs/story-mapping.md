@@ -1,7 +1,7 @@
 # Story Mapping: Design
 
 **Status:** draft 3, 2026-11-21. Decisions on the open questions recorded under
-"Decisions". Implements TODO.md §4 and §13–15, extended with
+"Decisions". Phase 1 built. Implements TODO.md §4 and §13–15, extended with
 research across forgant-library (see "What the library says").
 
 ## Why
@@ -255,8 +255,12 @@ and how it checks it.
    installed: it's the old binary, and nothing removes it until we do.
 2. **One session document.** The story map is a `story_map` section of the
    storm's session. Record IDs survive `import_session`; only the session ID
-   changes. Both servers take an exclusive `flock` on a lock file next to
-   `session.json` around each load-modify-save.
+   changes. Both servers write the same file, so `Save` is revision-checked: it
+   holds an exclusive `flock` on `session.json.lock` while it compares the
+   file's `revision` with the one this copy loaded, refuses if another server
+   saved in between, and writes the next revision. A refused save is a tool
+   error the LLM retries. That gives the same safety as locking the whole
+   load-modify-save, without restructuring every mutation. (Built in phase 1.)
 3. **A role is a storm actor** with story-mapping detail added.
 4. **Shared code, not a published schema.** Types go in
    `internal/session/storymap.go`, tools in `internal/mcp/storymap.go`, and the
