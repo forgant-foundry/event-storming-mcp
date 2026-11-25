@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # go.mod states the minimum Go; build and test with the latest stable
       # release so binaries get the newest standard-library security fixes.
       - uses: actions/setup-go@v5
