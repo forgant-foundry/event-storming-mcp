@@ -347,7 +347,7 @@ Plain Go and GitHub, hand-maintained:
   latest stable Go; `go.mod`'s `go` line is only the minimum.
 - `.github/workflows/release.yml` runs on a pushed `v*` tag and publishes
   binaries for linux, darwin and windows (amd64 and arm64) with GoReleaser
-  (`.goreleaser.yaml`). Release by tagging: `git tag v0.7.0 && git push origin v0.7.0`.
+  (`.goreleaser.yaml`). Release by tagging: `git tag v0.16.0 && git push origin v0.16.0`.
 - The version the server reports comes from Go's build info, which Go stamps from
-  the tag when building a clean tagged checkout; `go install …@v0.7.0` gets it too.
+  the tag when building a clean tagged checkout; `go install …@v0.16.0` gets it too.
 - `.github/dependabot.yml` updates Go modules and Actions weekly.
