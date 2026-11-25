@@ -118,9 +118,15 @@ after each offered command. Don't draw it and don't describe controls: no
 buttons, fields or dropdowns.
 
 ```
-add_screen(session_id, name, shows, offers: [{command_id, shows_after}])
+add_screen(session_id, name, context_id, shows, offers: [{command_id, shows_after}])
 update_step(session_id, step_id, screen_id)
 ```
+
+Put each screen in its front end's bounded context (`context_id`, e.g. Web); its
+features are emitted there. Always record `shows_after`: it's how a journey reads
+the outcome from the screen instead of asking the API. A step a person takes off
+any screen (an operator's `docker compose up`) gets `off_screen` with the reason
+instead of a screen.
 
 Every offered command will get its own scenario. A screen that offers a command
 with no domain behaviour behind it is exactly how a product ships buttons that do
@@ -170,12 +176,68 @@ Call `check_links` and work through the findings with the expert:
 The map is linked when `check_links` has no warnings and no lint, and every note
 has an answer.
 
-Emitting journeys, screen scenarios and the factory handoff from the map comes in
-a later version of this server. Until then, the storm's Gherkin emit, on the
-events server, is unchanged, and `resume_session` shows the whole map.
+## 7. Confirm the Next Slice
+
+Only for the slice going to the factory next, usually the walking skeleton. The
+rest of the map stays a mile wide and an inch deep. This is the story workshop,
+compressed into **example mapping**: for each story in the slice,
+
+1. **The why.** If the story has none, ask for it.
+2. **The rules.** Ask: "What has to be true for this to be done?" Each answer is
+   a rule, recorded with `add_criterion` as its `text`.
+3. **An example per rule.** Ask: "Give me one concrete case." Write it as
+   Given/When/Then in the domain's words, with realistic values. If several
+   cases differ only in values, give them as `examples` rows and refer to the
+   columns as `<column>` in the steps.
+4. **Questions** nobody can answer now become hot spots (`add_hot_spot`).
+
+Play the tester while you do it: for each rule ask "what about…?", and propose
+the failure and misuse examples the expert might be too optimistic to consider.
+Write behaviour, not mechanics: no clicks, buttons or fields. Those belong to the
+test's driver.
+
+Then the journey itself. For each step in the slice, ask: "What would we type in,
+and what would we see?" Record it as `journey_when` and `journey_then` with
+`update_step`, naming the screen ("the accountant records a transaction of -42.50
+on the account screen" / "the account screen shows a balance of 957.50"). Keep the
+values consistent from step to step: they're one person's path through the
+product. If every journey starts the same way ("the developer rung is running"),
+record it as the slice's `preconditions`.
+
+**Constraints.** Ask: "How fast, how available, how accessible does this need to
+be, and for whom?" Record each as `add_constraint` with what's measured and its
+target in the user's terms. "Fast" or "easy" isn't a target.
+
+## 8. Check Readiness and Emit
+
+Call `check_readiness` for the slice. Work through every blocking item:
+- a story without a why or criteria;
+- a step with no screen and no `off_screen`;
+- a step using a command or read model its screen doesn't offer or show;
+- an outcome that can't be read from the screen (no `shows_after` or
+  `journey_then`);
+- an offered command with no domain behaviour in the storm (raise it for the
+  events server);
+- a constraint without a measure and target;
+- glossary lint.
+
+Read the notes back to the expert: UI mechanics in a criterion, a story that
+sounds split by technical layer, an offered command no journey uses.
+
+When the slice is ready, call `emit_story_map` with the project's specs
+directory, the same one the storm's specs go to. It writes:
+- the slice's journeys, one scenario per role;
+- each story's criteria as scenarios;
+- a scenario per read model each screen shows and per command it offers;
+- `constraints.feature`;
+- `story-map/slices.json`, which a factory reads for readiness and build order;
+- `story-map/story-map.md` for people.
+
+Read one journey and one screen feature back to the expert.
 
 ## Wrap Up
 
-Read back the frame, the roles, the backbone, and each slice with its outcome.
+Read back the frame, the roles, the backbone, and each slice with its outcome
+and whether it's ready.
 Read back the open hot spots, and say which are gaps for the storm. If you
 proposed anything, say how much of the map is `source: facilitator`.

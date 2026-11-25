@@ -1,7 +1,7 @@
 # Story Mapping: Design
 
 **Status:** draft 3, 2026-11-21. Decisions on the open questions recorded under
-"Decisions". Phase 1 built. Implements TODO.md §4 and §13–15, extended with
+"Decisions". Phases 1 and 2 built. Implements TODO.md §4 and §13–15, extended with
 research across forgant-library (see "What the library says").
 
 ## Why
@@ -492,6 +492,46 @@ finant-api's Web context modelled each screen as an aggregate. Converting one:
 Then remove the aggregate, its `View` command and its `Shown` events from the
 storm. Do the first conversion by hand with the playbook; it only becomes a tool
 if a second session needs it.
+
+## Phase 2 refinements (2026-11-25)
+
+From TODO.md §16, forgant-factory's `docs/next-steps.md` ("Journeys go through the
+surface, with evidence", and §4's "example mapping into Gherkin") and finant-api's
+hand-written screen and journey specs (`d833b12`):
+
+- **`slices.json`, not `handoff.json`.** The factory's handoff already exists (layout,
+  stack, runtime, running command and tags), re-synced from the feature files. The
+  map emits each slice's readiness, what blocks it, build order and files, for the
+  factory to read beside it.
+- **Screens belong to a front-end bounded context** (`context_id`, e.g. Web). The
+  factory treats each front end as a bounded context, and its surfaces name one.
+  This is the platform half of the screen-categorisation decision; user type stays
+  derived from the roles whose steps happen on a screen.
+- **Layout follows the storm's emit:** a screen's feature is
+  `<context>/<screen>.feature` (`@context:<c> @screen:<s>`), and a slice's journeys
+  are one feature per slice, `<context>/<slice>.feature`, with **one scenario per
+  role** (`@running @slice:<s>`; `@walking-skeleton` on the skeleton; `@journey` on
+  every scenario taken through screens).
+- **A journey step names its screen:** "When the accountant records a transaction
+  of -42.50 on the account screen", and its outcome is read from the screen: "Then
+  the account screen shows a balance of 957.50". The derived text appends "on the
+  <screen>", and the outcome comes from the offer's `shows_after`. Steps take an
+  optional `journey_when` / `journey_then` for concrete values; a `journey_when`
+  must name the step's screen.
+- **Off-screen steps are explicit.** A step a person takes off any screen (the
+  operator's `docker compose up`) sets `off_screen` with the reason. Every other
+  step in a slice needs a screen, and a role whose steps are all off-screen gets
+  `@running` without `@journey`.
+- **Slices take `preconditions`**, written as the opening `Given`s of each journey
+  ("the developer rung is running").
+- **Acceptance criteria are example mapping:** a story's rules are its criteria,
+  each with Given/When/Then and optional example rows (a Scenario Outline); its
+  questions are hot spots.
+- **Readiness blocks** a slice step with no screen (unless `off_screen`), a step
+  using a command or read model its screen doesn't offer or show, a surface step
+  whose outcome can't be read from the screen (no `shows_after` or
+  `journey_then`), and an offered command with no domain behaviour. It **reports**
+  every offered command no journey uses.
 
 ## Phases
 

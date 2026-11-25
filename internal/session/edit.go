@@ -23,7 +23,7 @@ const (
 var Kinds = []string{
 	KindEvent, KindCommand, KindActor, KindPolicy, KindReadModel,
 	KindHotSpot, KindAggregate, KindContext, KindTerm,
-	KindRole, KindActivity, KindStep, KindStory, KindScreen, KindSlice,
+	KindRole, KindActivity, KindStep, KindStory, KindScreen, KindSlice, KindConstraint,
 }
 
 // has reports whether a record of the given kind and ID exists.
@@ -62,6 +62,8 @@ func (s *Session) has(kind, id string) bool {
 			return slices.ContainsFunc(m.Screens, func(sc Screen) bool { return sc.ID == id })
 		case KindSlice:
 			return slices.ContainsFunc(m.Slices, func(sl Slice) bool { return sl.ID == id })
+		case KindConstraint:
+			return slices.ContainsFunc(m.Constraints, func(c Constraint) bool { return c.ID == id })
 		}
 	}
 	return false

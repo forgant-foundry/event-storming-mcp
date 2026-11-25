@@ -199,7 +199,7 @@ Aggregates and contexts take `preconditions`, emitted once as a Gherkin `Backgro
 | `import_session` | Load a session from an exported file; returns a new local session ID. Pass `sync_path` to replace the file's own |
 | `set_sync_path` | Configure a project-local file to stay in sync on every save |
 
-### Stories server tools (29)
+### Stories server tools (34)
 
 The stories server shares the session, glossary, hot spot, removal, portability and
 playbook tools with the events server, and adds:
@@ -215,6 +215,10 @@ playbook tools with the events server, and adds:
 | `add_slice` / `update_slice` / `assign_to_slice` | Release, learning and development slices, including the walking skeleton |
 | `move_item` | Reorder activities, steps, stories and slices |
 | `check_links` | Check the map against the storm both ways, and lint its wording against the glossary |
+| `add_criterion` | Example mapping: a story's rule with a concrete Given/When/Then, optionally with example rows |
+| `add_constraint` / `update_constraint` | A testable cross-functional requirement with what's measured and its target |
+| `check_readiness` | Per slice, what blocks it going to a factory |
+| `emit_story_map` | Journeys, story criteria, screen scenarios, constraints, `slices.json` and `story-map.md` |
 
 ## Playbooks
 | Tool | Description |

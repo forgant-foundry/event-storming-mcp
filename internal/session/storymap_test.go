@@ -271,3 +271,121 @@ func TestCheckLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestReadiness(t *testing.T) {
+	l := buildLedgerMap(t)
+	id := l.s.ID
+	// The ledger map's record step is on the Transactions screen, which offers
+	// RecordTransaction with shows_after. Open has no screen; submit has no
+	// screen; approve's command has no events.
+	_, sl, _ := session.AddSlice(id, session.Slice{Name: "first release", Kind: session.SliceRelease}, "")
+	_, rec, _ := session.AddStory(id, session.Story{StepID: l.recordStep.ID, Title: "record a transaction", SliceID: sl.ID}, "")
+	_, open, _ := session.AddStory(id, session.Story{StepID: l.openStep.ID, Title: "open a ledger in the database", Why: "somewhere to record",
+		SliceID: sl.ID, Criteria: []session.Criterion{{Text: "a ledger opens", When: "the accountant clicks Open", Then: []string{"a ledger is opened"}}}}, "")
+	_, app, _ := session.AddStory(id, session.Story{StepID: l.approveStep.ID, Title: "approve", Why: "money moves", SliceID: sl.ID,
+		Criteria: []session.Criterion{{Text: "approval", When: "the approver approves", Then: []string{"approved"}}}}, "")
+	_ = open
+	_ = app
+	session.AddConstraint(id, session.Constraint{Text: "fast enough", Kind: "performance"})
+
+	loaded, _ := session.Load(id)
+	r := session.Readiness(loaded)
+	if len(r) != 1 || r[0].Ready {
+		t.Fatalf("expected one slice, not ready: %+v", r)
+	}
+	joined := strings.Join(r[0].Blocking, "\n")
+	for _, want := range []string{
+		`story "record a transaction" has no why`,
+		`story "record a transaction" has no acceptance criteria`,
+		`step "open a ledger" has no screen`,
+		`step "approve the transfer" issues ApproveTransfer, which has no linked events`,
+		`step "approve the transfer" waits for a step that isn't in this slice`,
+		`constraint "fast enough" needs a measure and a target`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("blocking missing %q:\n%s", want, joined)
+		}
+	}
+	notes := strings.Join(r[0].Notes, "\n")
+	for _, want := range []string{`names UI mechanics ("clicks")`, `mentions "database"`} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes missing %q:\n%s", want, notes)
+		}
+	}
+
+	// Fix the record step: give it a why and a criterion; it's on a screen that
+	// offers its command with shows_after, so no screen findings for it.
+	session.UpdateStory(id, rec.ID, session.StoryPatch{Why: ptr("my balance is right"),
+		Criteria: &[]session.Criterion{{Text: "a transaction is recorded", When: "the accountant records one", Then: []string{"it is recorded"}}}})
+	loaded, _ = session.Load(id)
+	for _, b := range session.Readiness(loaded)[0].Blocking {
+		if strings.Contains(b, `"record a transaction"`) {
+			t.Errorf("record step should be clean now: %s", b)
+		}
+	}
+}
+
+func TestReadiness_ScreenRules(t *testing.T) {
+	l := buildLedgerMap(t)
+	id := l.s.ID
+	_, sl, _ := session.AddSlice(id, session.Slice{Name: "s", Kind: session.SliceRelease}, "")
+	c := []session.Criterion{{Text: "x", When: "w", Then: []string{"t"}}}
+	session.AddStory(id, session.Story{StepID: l.recordStep.ID, Title: "record", Why: "y", SliceID: sl.ID, Criteria: c}, "")
+
+	// No shows_after and no journey_then: the outcome can't be read from the screen.
+	session.UpdateScreen(id, l.screen.ID, session.ScreenPatch{Offers: &[]session.Offer{{CommandID: l.record.ID}}})
+	// A journey_when that doesn't name the screen.
+	session.UpdateStep(id, l.recordStep.ID, session.StepPatch{JourneyWhen: ptr("the accountant records -42.50")})
+	// A step using a read model its screen doesn't show.
+	session.UpdateStep(id, l.recordStep.ID, session.StepPatch{ReadModelIDs: &[]string{l.balance.ID}})
+	session.UpdateScreen(id, l.screen.ID, session.ScreenPatch{Shows: &[]string{}})
+
+	loaded, _ := session.Load(id)
+	joined := strings.Join(session.Readiness(loaded)[0].Blocking, "\n")
+	for _, want := range []string{
+		"so the journey can't read the outcome from the screen",
+		"doesn't name the transactions screen",
+		"which doesn't show Account Balance",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("blocking missing %q:\n%s", want, joined)
+		}
+	}
+
+	// off_screen exempts a step from the screen rules but can't be combined with a screen.
+	if _, _, err := session.UpdateStep(id, l.recordStep.ID, session.StepPatch{OffScreen: ptr("a CLI")}); err == nil {
+		t.Error("expected an error setting off_screen on a step that has a screen")
+	}
+}
+
+func TestConstraintsAndCriteria(t *testing.T) {
+	l := buildLedgerMap(t)
+	id := l.s.ID
+	if _, _, err := session.AddConstraint(id, session.Constraint{Text: "x", Kind: "speed"}); err == nil {
+		t.Error("expected an error for an unknown constraint kind")
+	}
+	if _, _, err := session.AddConstraint(id, session.Constraint{Text: "x", Kind: "performance", ScopeKind: session.KindScreen}); err == nil {
+		t.Error("expected an error for a screen constraint with no scope_id")
+	}
+	_, c, err := session.AddConstraint(id, session.Constraint{Text: "shows promptly", Kind: "performance", ScopeKind: session.KindScreen, ScopeID: l.screen.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Removing the screen keeps the constraint, now map-wide, and says so.
+	_, detached, _ := session.RemoveItem(id, session.KindScreen, l.screen.ID)
+	if !strings.Contains(strings.Join(detached, "\n"), "now applies to the whole map") {
+		t.Errorf("expected the constraint to be rescoped: %v", detached)
+	}
+	loaded, _ := session.Load(id)
+	if got := loaded.StoryMap.Constraints[0]; got.ID != c.ID || got.ScopeKind != "map" {
+		t.Errorf("constraint: %+v", got)
+	}
+
+	_, st, _ := session.AddStory(id, session.Story{StepID: l.openStep.ID, Title: "open"}, "")
+	if _, _, err := session.AddCriterion(id, st.ID, session.Criterion{Text: "x", Examples: &session.Examples{Columns: []string{"a", "b"}, Rows: [][]string{{"1"}}}}); err == nil {
+		t.Error("expected an error for an example row with the wrong number of values")
+	}
+	if _, got, err := session.AddCriterion(id, st.ID, session.Criterion{Text: "opens", When: "w", Then: []string{"t"}}); err != nil || len(got.Criteria) != 1 {
+		t.Errorf("add criterion: %v %+v", err, got)
+	}
+}

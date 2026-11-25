@@ -8,7 +8,7 @@ import (
 
 func isStoryMapKind(kind string) bool {
 	switch kind {
-	case KindRole, KindActivity, KindStep, KindStory, KindScreen, KindSlice:
+	case KindRole, KindActivity, KindStep, KindStory, KindScreen, KindSlice, KindConstraint:
 		return true
 	}
 	return false
@@ -236,6 +236,9 @@ func validateStep(s *Session, m *StoryMap, st Step) error {
 			return err
 		}
 	}
+	if st.OffScreen != "" && st.ScreenID != "" {
+		return fmt.Errorf("a step is either on a screen or off_screen, not both")
+	}
 	if st.AfterStepID != "" {
 		i := slices.IndexFunc(m.Steps, func(x Step) bool { return x.ID == st.AfterStepID })
 		if i < 0 {
@@ -275,6 +278,7 @@ func AddStep(sessionID string, st Step, beforeID string) (*Session, *Step, error
 
 type StepPatch struct {
 	Name, ActivityID, RoleID, ScreenID, AfterStepID, Notes *string
+	JourneyWhen, JourneyThen, OffScreen                    *string
 	CommandIDs, ReadModelIDs                               *[]string
 	Source                                                 *Source
 }
@@ -292,6 +296,9 @@ func UpdateStep(sessionID, stepID string, p StepPatch) (*Session, *Step, error) 
 		set(&st.RoleID, p.RoleID)
 		set(&st.ScreenID, p.ScreenID)
 		set(&st.AfterStepID, p.AfterStepID)
+		set(&st.JourneyWhen, p.JourneyWhen)
+		set(&st.JourneyThen, p.JourneyThen)
+		set(&st.OffScreen, p.OffScreen)
 		set(&st.Notes, p.Notes)
 		set(&st.CommandIDs, p.CommandIDs)
 		set(&st.ReadModelIDs, p.ReadModelIDs)
@@ -324,7 +331,50 @@ func validateStory(s *Session, st Story) error {
 	if st.StepID == "" {
 		return fmt.Errorf("a story needs a step_id")
 	}
+	for i, c := range st.Criteria {
+		if err := validateCriterion(c); err != nil {
+			return fmt.Errorf("criterion %d: %w", i+1, err)
+		}
+	}
 	return s.checkRefs(KindStep, st.StepID, KindSlice, st.SliceID, KindEvent, st.EventID)
+}
+
+func validateCriterion(c Criterion) error {
+	if err := checkNonEmpty("text", c.Text); err != nil {
+		return err
+	}
+	if c.Examples != nil {
+		if len(c.Examples.Columns) == 0 || len(c.Examples.Rows) == 0 {
+			return fmt.Errorf("examples need columns and at least one row")
+		}
+		for i, row := range c.Examples.Rows {
+			if len(row) != len(c.Examples.Columns) {
+				return fmt.Errorf("example row %d has %d values for %d columns", i+1, len(row), len(c.Examples.Columns))
+			}
+		}
+	}
+	return nil
+}
+
+// AddCriterion appends one acceptance criterion to a story.
+func AddCriterion(sessionID, storyID string, c Criterion) (*Session, *Story, error) {
+	var out *Story
+	s, err := mutateMap(sessionID, func(_ *Session, m *StoryMap) error {
+		i := slices.IndexFunc(m.Stories, func(st Story) bool { return st.ID == storyID })
+		if i < 0 {
+			return fmt.Errorf("story %s not found", storyID)
+		}
+		if err := validateCriterion(c); err != nil {
+			return err
+		}
+		m.Stories[i].Criteria = append(m.Stories[i].Criteria, c)
+		out = &m.Stories[i]
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, out, nil
 }
 
 // AddStory adds a story under its step, before beforeID (a story under the
@@ -358,6 +408,7 @@ func AddStory(sessionID string, st Story, beforeID string) (*Session, *Story, er
 type StoryPatch struct {
 	Title, Why, StepID, SliceID, EventID, Notes *string
 	Kind                                        *StoryKind
+	Criteria                                    *[]Criterion
 	Source                                      *Source
 }
 
@@ -376,6 +427,7 @@ func UpdateStory(sessionID, storyID string, p StoryPatch) (*Session, *Story, err
 		set(&st.EventID, p.EventID)
 		set(&st.Notes, p.Notes)
 		set(&st.Kind, p.Kind)
+		set(&st.Criteria, p.Criteria)
 		set(&st.Source, p.Source)
 		if err := validateStory(s, st); err != nil {
 			return err
@@ -395,6 +447,9 @@ func validateScreen(s *Session, sc Screen) error {
 		return err
 	}
 	if err := checkSource(sc.Source); err != nil {
+		return err
+	}
+	if err := s.checkRefs(KindContext, sc.ContextID); err != nil {
 		return err
 	}
 	for _, id := range sc.Shows {
@@ -440,10 +495,10 @@ func AddScreen(sessionID string, sc Screen) (*Session, *Screen, error) {
 }
 
 type ScreenPatch struct {
-	Name, Notes *string
-	Shows       *[]string
-	Offers      *[]Offer
-	Source      *Source
+	Name, Notes, ContextID *string
+	Shows                  *[]string
+	Offers                 *[]Offer
+	Source                 *Source
 }
 
 func UpdateScreen(sessionID, screenID string, p ScreenPatch) (*Session, *Screen, error) {
@@ -456,6 +511,7 @@ func UpdateScreen(sessionID, screenID string, p ScreenPatch) (*Session, *Screen,
 		sc := m.Screens[i]
 		set(&sc.Name, p.Name)
 		set(&sc.Notes, p.Notes)
+		set(&sc.ContextID, p.ContextID)
 		set(&sc.Shows, p.Shows)
 		set(&sc.Offers, p.Offers)
 		set(&sc.Source, p.Source)
@@ -519,6 +575,7 @@ type SlicePatch struct {
 	Name, Outcome, Notes *string
 	Kind                 *SliceKind
 	WalkingSkeleton      *bool
+	Preconditions        *[]string
 }
 
 func UpdateSlice(sessionID, sliceID string, p SlicePatch) (*Session, *Slice, error) {
@@ -534,6 +591,7 @@ func UpdateSlice(sessionID, sliceID string, p SlicePatch) (*Session, *Slice, err
 		set(&sl.Notes, p.Notes)
 		set(&sl.Kind, p.Kind)
 		set(&sl.WalkingSkeleton, p.WalkingSkeleton)
+		set(&sl.Preconditions, p.Preconditions)
 		if err := validateSlice(m, sl); err != nil {
 			return err
 		}
@@ -647,6 +705,8 @@ func (s *Session) removeStoryMapItem(kind, id string, detached *[]string) error 
 		}
 	case KindStory:
 		m.Stories = slices.DeleteFunc(m.Stories, func(st Story) bool { return st.ID == id })
+	case KindConstraint:
+		m.Constraints = slices.DeleteFunc(m.Constraints, func(c Constraint) bool { return c.ID == id })
 	case KindScreen:
 		m.Screens = slices.DeleteFunc(m.Screens, func(sc Screen) bool { return sc.ID == id })
 		for i := range m.Steps {
@@ -664,7 +724,24 @@ func (s *Session) removeStoryMapItem(kind, id string, detached *[]string) error 
 			}
 		}
 	}
+	switch kind {
+	case KindStep, KindScreen, KindSlice:
+		s.rescopeConstraints(id, detached)
+	}
 	return nil
+}
+
+// rescopeConstraints makes constraints scoped to a removed record map-wide,
+// rather than silently dropping them, and reports each.
+func (s *Session) rescopeConstraints(id string, detached *[]string) {
+	m := s.storyMap()
+	for i := range m.Constraints {
+		if m.Constraints[i].ScopeID == id {
+			m.Constraints[i].ScopeKind = "map"
+			m.Constraints[i].ScopeID = ""
+			*detached = append(*detached, fmt.Sprintf("%s %q (%s): now applies to the whole map", KindConstraint, m.Constraints[i].Text, m.Constraints[i].ID))
+		}
+	}
 }
 
 func (s *Session) clearRole(roleID string, note func(what, name, recID, field string)) {
@@ -734,6 +811,13 @@ func (s *Session) cascadeIntoStoryMap(kind, id string, detached *[]string) {
 				note(KindScreen, m.Screens[i].Name, m.Screens[i].ID, "no longer shows it")
 			}
 		}
+	case KindContext:
+		for i := range m.Screens {
+			if m.Screens[i].ContextID == id {
+				m.Screens[i].ContextID = ""
+				note(KindScreen, m.Screens[i].Name, m.Screens[i].ID, "context_id cleared")
+			}
+		}
 	case KindEvent:
 		for i := range m.Stories {
 			if m.Stories[i].EventID == id {
@@ -752,4 +836,86 @@ func countFunc[T any](list []T, f func(T) bool) int {
 		}
 	}
 	return n
+}
+
+func validateConstraint(s *Session, c Constraint) error {
+	if err := checkNonEmpty("text", c.Text); err != nil {
+		return err
+	}
+	if err := checkSource(c.Source); err != nil {
+		return err
+	}
+	if !slices.Contains(ConstraintKinds, c.Kind) {
+		return fmt.Errorf("kind must be one of %v; got %q", ConstraintKinds, c.Kind)
+	}
+	switch c.ScopeKind {
+	case "map":
+		if c.ScopeID != "" {
+			return fmt.Errorf("a map-wide constraint has no scope_id")
+		}
+		return nil
+	case KindSlice, KindStep, KindScreen:
+		if c.ScopeID == "" {
+			return fmt.Errorf("a %s constraint needs a scope_id", c.ScopeKind)
+		}
+		return s.checkRefs(c.ScopeKind, c.ScopeID)
+	}
+	return fmt.Errorf("scope_kind must be one of: map, slice, step, screen; got %q", c.ScopeKind)
+}
+
+// AddConstraint records a cross-functional requirement. ScopeKind defaults to map.
+func AddConstraint(sessionID string, c Constraint) (*Session, *Constraint, error) {
+	var out *Constraint
+	s, err := mutateMap(sessionID, func(s *Session, m *StoryMap) error {
+		if c.ScopeKind == "" {
+			c.ScopeKind = "map"
+		}
+		if err := validateConstraint(s, c); err != nil {
+			return err
+		}
+		c.ID = newID("cons")
+		c.CreatedAt = time.Now()
+		m.Constraints = append(m.Constraints, c)
+		out = &m.Constraints[len(m.Constraints)-1]
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, out, nil
+}
+
+type ConstraintPatch struct {
+	Text, ScopeKind, ScopeID, Measure, Target, Notes *string
+	Kind                                             *ConstraintKind
+	Source                                           *Source
+}
+
+func UpdateConstraint(sessionID, constraintID string, p ConstraintPatch) (*Session, *Constraint, error) {
+	var out *Constraint
+	s, err := mutateMap(sessionID, func(s *Session, m *StoryMap) error {
+		i := slices.IndexFunc(m.Constraints, func(c Constraint) bool { return c.ID == constraintID })
+		if i < 0 {
+			return fmt.Errorf("constraint %s not found", constraintID)
+		}
+		c := m.Constraints[i]
+		set(&c.Text, p.Text)
+		set(&c.ScopeKind, p.ScopeKind)
+		set(&c.ScopeID, p.ScopeID)
+		set(&c.Measure, p.Measure)
+		set(&c.Target, p.Target)
+		set(&c.Notes, p.Notes)
+		set(&c.Kind, p.Kind)
+		set(&c.Source, p.Source)
+		if err := validateConstraint(s, c); err != nil {
+			return err
+		}
+		m.Constraints[i] = c
+		out = &m.Constraints[i]
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, out, nil
 }

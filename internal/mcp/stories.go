@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/forgant-foundry/forgant-discovery/internal/gherkin"
 	"github.com/forgant-foundry/forgant-discovery/internal/playbooks"
 	"github.com/forgant-foundry/forgant-discovery/internal/session"
 )
@@ -34,6 +36,11 @@ func NewStories() *server.MCPServer {
 	s.AddTool(assignToSliceTool(), handleAssignToSlice)
 	s.AddTool(moveItemTool(), handleMoveItem)
 	s.AddTool(checkLinksTool(), handleCheckLinks)
+	s.AddTool(addCriterionTool(), handleAddCriterion)
+	s.AddTool(addConstraintTool(), handleAddConstraint)
+	s.AddTool(updateConstraintTool(), handleUpdateConstraint)
+	s.AddTool(checkReadinessTool(), handleCheckReadiness)
+	s.AddTool(emitStoryMapTool(), handleEmitStoryMap)
 	return s
 }
 
@@ -264,6 +271,9 @@ func stepLinkOptions() []libmcp.ToolOption {
 		libmcp.WithArray("read_model_ids", libmcp.WithStringItems(), libmcp.Description("Storm read models the role looks at in this step")),
 		libmcp.WithString("screen_id", libmcp.Description("The screen the step happens on")),
 		libmcp.WithString("after_step_id", libmcp.Description("A hand-off: another role's step this one waits for. The later role's journey replays the earlier role's journey up to that step as Givens.")),
+		libmcp.WithString("journey_when", libmcp.Description("The step's When in a journey, with concrete values and naming its screen, e.g. 'the accountant records a transaction of -42.50 on the account screen'. Without it, the text is derived from the command.")),
+		libmcp.WithString("journey_then", libmcp.Description("The step's Then in a journey, read from the screen, e.g. 'the account screen shows a balance of 957.50'. Without it, the offer's shows_after is used.")),
+		libmcp.WithString("off_screen", libmcp.Description("Why the step is taken off any screen (e.g. 'the operator's docker compose up'). Without it, a step in a slice needs a screen.")),
 		libmcp.WithString("notes", libmcp.Description("Optional notes")),
 	}
 }
@@ -294,6 +304,9 @@ func handleAddStep(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallT
 		ReadModelIDs: req.GetStringSlice("read_model_ids", nil),
 		ScreenID:     req.GetString("screen_id", ""),
 		AfterStepID:  req.GetString("after_step_id", ""),
+		JourneyWhen:  req.GetString("journey_when", ""),
+		JourneyThen:  req.GetString("journey_then", ""),
+		OffScreen:    req.GetString("off_screen", ""),
 		Notes:        req.GetString("notes", ""),
 		Source:       session.Source(req.GetString("source", "")),
 	}, req.GetString("before_id", ""))
@@ -325,6 +338,7 @@ func handleUpdateStep(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 	if err := optStringFields(req, map[string]**string{
 		"name": &p.Name, "activity_id": &p.ActivityID, "role_id": &p.RoleID,
 		"screen_id": &p.ScreenID, "after_step_id": &p.AfterStepID, "notes": &p.Notes,
+		"journey_when": &p.JourneyWhen, "journey_then": &p.JourneyThen, "off_screen": &p.OffScreen,
 	}); err != nil {
 		return toolError(err)
 	}
@@ -363,6 +377,7 @@ func addStoryTool() libmcp.Tool {
 		storyKindOption(),
 		libmcp.WithString("slice_id", libmcp.Description("The slice it belongs to")),
 		libmcp.WithString("event_id", libmcp.Description("For a failure story: the storm's conditional event it describes")),
+		withCriteria(),
 		libmcp.WithString("notes", libmcp.Description("Optional notes")),
 		libmcp.WithString("before_id", libmcp.Description("ID of a story under the same step to rank this one above")),
 		withSource(),
@@ -374,7 +389,11 @@ func handleAddStory(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 	if err != nil {
 		return toolError(err)
 	}
-	_, st, err := session.AddStory(ids[0], session.Story{
+	criteria, err := optCriteria(req)
+	if err != nil {
+		return toolError(err)
+	}
+	story := session.Story{
 		StepID:  ids[1],
 		Title:   ids[2],
 		Why:     req.GetString("why", ""),
@@ -383,7 +402,11 @@ func handleAddStory(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 		EventID: req.GetString("event_id", ""),
 		Notes:   req.GetString("notes", ""),
 		Source:  session.Source(req.GetString("source", "")),
-	}, req.GetString("before_id", ""))
+	}
+	if criteria != nil {
+		story.Criteria = *criteria
+	}
+	_, st, err := session.AddStory(ids[0], story, req.GetString("before_id", ""))
 	if err != nil {
 		return toolError(err)
 	}
@@ -401,6 +424,7 @@ func updateStoryTool() libmcp.Tool {
 		storyKindOption(),
 		libmcp.WithString("slice_id", libmcp.Description("The slice it belongs to; empty string takes it out of any slice")),
 		libmcp.WithString("event_id", libmcp.Description("The storm's conditional event it describes")),
+		withCriteria(),
 		libmcp.WithString("notes", libmcp.Description("New notes")),
 		withSource(),
 	)
@@ -423,6 +447,9 @@ func handleUpdateStory(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 		k := session.StoryKind(*kind)
 		p.Kind = &k
 	}
+	if p.Criteria, err = optCriteria(req); err != nil {
+		return toolError(err)
+	}
 	if p.Source, err = optSource(req); err != nil {
 		return toolError(err)
 	}
@@ -442,6 +469,7 @@ func addScreenTool() libmcp.Tool {
 		libmcp.WithString("name", libmcp.Required(), libmcp.Description("Screen name, e.g. 'Transactions'")),
 		libmcp.WithArray("shows", libmcp.WithStringItems(), libmcp.Description("IDs of storm read models the screen shows")),
 		withOffers(),
+		withScreenContext(),
 		libmcp.WithString("notes", libmcp.Description("Optional notes")),
 		withSource(),
 	)
@@ -457,10 +485,11 @@ func handleAddScreen(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Cal
 		return toolError(err)
 	}
 	sc := session.Screen{
-		Name:   ids[1],
-		Shows:  req.GetStringSlice("shows", nil),
-		Notes:  req.GetString("notes", ""),
-		Source: session.Source(req.GetString("source", "")),
+		Name:      ids[1],
+		ContextID: req.GetString("context_id", ""),
+		Shows:     req.GetStringSlice("shows", nil),
+		Notes:     req.GetString("notes", ""),
+		Source:    session.Source(req.GetString("source", "")),
 	}
 	if offers != nil {
 		sc.Offers = *offers
@@ -480,6 +509,7 @@ func updateScreenTool() libmcp.Tool {
 		libmcp.WithString("name", libmcp.Description("New name")),
 		libmcp.WithArray("shows", libmcp.WithStringItems(), libmcp.Description("Replacement list of read model IDs")),
 		withOffers(),
+		withScreenContext(),
 		libmcp.WithString("notes", libmcp.Description("New notes")),
 		withSource(),
 	)
@@ -491,7 +521,7 @@ func handleUpdateScreen(_ context.Context, req libmcp.CallToolRequest) (*libmcp.
 		return toolError(err)
 	}
 	var p session.ScreenPatch
-	if err := optStringFields(req, map[string]**string{"name": &p.Name, "notes": &p.Notes}); err != nil {
+	if err := optStringFields(req, map[string]**string{"name": &p.Name, "notes": &p.Notes, "context_id": &p.ContextID}); err != nil {
 		return toolError(err)
 	}
 	if p.Shows, err = optStrings(req, "shows"); err != nil {
@@ -527,6 +557,7 @@ func addSliceTool() libmcp.Tool {
 		sliceKindOption(),
 		libmcp.WithString("outcome", libmcp.Description("What the slice achieves, or for a learning slice what we'll learn")),
 		libmcp.WithBoolean("walking_skeleton", libmcp.Description("This development slice is the walking skeleton: just enough to see the product working end to end. At most one.")),
+		libmcp.WithArray("preconditions", libmcp.WithStringItems(), libmcp.Description("Opening Givens of every journey in the slice, e.g. 'the developer rung is running'")),
 		libmcp.WithString("notes", libmcp.Description("Optional notes")),
 		libmcp.WithString("before_id", libmcp.Description("ID of the slice to place this one above")),
 	)
@@ -542,6 +573,7 @@ func handleAddSlice(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Call
 		Kind:            session.SliceKind(ids[2]),
 		Outcome:         req.GetString("outcome", ""),
 		WalkingSkeleton: req.GetBool("walking_skeleton", false),
+		Preconditions:   req.GetStringSlice("preconditions", nil),
 		Notes:           req.GetString("notes", ""),
 	}, req.GetString("before_id", ""))
 	if err != nil {
@@ -559,6 +591,7 @@ func updateSliceTool() libmcp.Tool {
 		sliceKindOption(),
 		libmcp.WithString("outcome", libmcp.Description("What it achieves")),
 		libmcp.WithBoolean("walking_skeleton", libmcp.Description("Whether it's the walking skeleton")),
+		libmcp.WithArray("preconditions", libmcp.WithStringItems(), libmcp.Description("Replacement list of the journeys' opening Givens")),
 		libmcp.WithString("notes", libmcp.Description("New notes")),
 	)
 }
@@ -578,6 +611,9 @@ func handleUpdateSlice(_ context.Context, req libmcp.CallToolRequest) (*libmcp.C
 		p.Kind = &k
 	}
 	if p.WalkingSkeleton, err = optBool(req, "walking_skeleton"); err != nil {
+		return toolError(err)
+	}
+	if p.Preconditions, err = optStrings(req, "preconditions"); err != nil {
 		return toolError(err)
 	}
 	_, sl, err := session.UpdateSlice(ids[0], ids[1], p)
@@ -661,4 +697,260 @@ func handleCheckLinks(_ context.Context, req libmcp.CallToolRequest) (*libmcp.Ca
 		"counts":   counts,
 		"findings": findings,
 	})
+}
+
+// --- phase 2: confirmation, constraints, readiness, emit ---
+
+func withScreenContext() libmcp.ToolOption {
+	return libmcp.WithString("context_id",
+		libmcp.Description("The front-end bounded context (surface) the screen belongs to, e.g. Web. Its features are emitted under that context's directory."),
+	)
+}
+
+var criterionSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"text":  map[string]any{"type": "string", "description": "The rule, used as the scenario title"},
+		"given": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Preconditions of the example"},
+		"when":  map[string]any{"type": "string", "description": "The action"},
+		"then":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "What we'll check"},
+		"examples": map[string]any{
+			"type":        "object",
+			"description": "Rows for a Scenario Outline; steps refer to columns as <column>",
+			"properties": map[string]any{
+				"columns": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"rows":    map[string]any{"type": "array", "items": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}},
+			},
+		},
+	},
+	"required": []string{"text"},
+}
+
+func withCriteria() libmcp.ToolOption {
+	return libmcp.WithArray("criteria", libmcp.Items(criterionSchema),
+		libmcp.Description("Acceptance criteria from example mapping: each rule with a concrete example as Given/When/Then, and optional example rows for a Scenario Outline. Replaces the list; add one at a time with add_criterion."),
+	)
+}
+
+func toStrings(v any) []string {
+	items, _ := v.([]any)
+	var out []string
+	for _, it := range items {
+		if s, ok := it.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func parseCriterion(v any) (session.Criterion, error) {
+	o, ok := v.(map[string]any)
+	if !ok {
+		return session.Criterion{}, fmt.Errorf("a criterion must be an object with text, given, when, then and examples")
+	}
+	c := session.Criterion{Given: toStrings(o["given"]), Then: toStrings(o["then"])}
+	c.Text, _ = o["text"].(string)
+	c.When, _ = o["when"].(string)
+	if ex, ok := o["examples"].(map[string]any); ok {
+		e := &session.Examples{Columns: toStrings(ex["columns"])}
+		rows, _ := ex["rows"].([]any)
+		for _, r := range rows {
+			e.Rows = append(e.Rows, toStrings(r))
+		}
+		c.Examples = e
+	}
+	return c, nil
+}
+
+func optCriteria(req libmcp.CallToolRequest) (*[]session.Criterion, error) {
+	v, ok := req.GetArguments()["criteria"]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("criteria must be an array of objects")
+	}
+	out := make([]session.Criterion, 0, len(items))
+	for _, it := range items {
+		c, err := parseCriterion(it)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return &out, nil
+}
+
+func addCriterionTool() libmcp.Tool {
+	return libmcp.NewTool("add_criterion",
+		libmcp.WithDescription("Add one acceptance criterion to a story (example mapping): the rule as text, a concrete example as Given/When/Then, and optional example rows (a Scenario Outline, steps referring to columns as <column>). Emitted as one scenario. Write the domain behaviour, not UI mechanics: no clicks, buttons or fields."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("story_id", libmcp.Required(), libmcp.Description("ID of the story")),
+		libmcp.WithString("text", libmcp.Required(), libmcp.Description("The rule, e.g. 'a split transaction's parts add up to its total'")),
+		libmcp.WithArray("given", libmcp.WithStringItems(), libmcp.Description("Preconditions")),
+		libmcp.WithString("when", libmcp.Description("The action")),
+		libmcp.WithArray("then", libmcp.WithStringItems(), libmcp.Description("What we'll check")),
+		libmcp.WithObject("examples", libmcp.Description("{columns: [...], rows: [[...], ...]} for a Scenario Outline")),
+	)
+}
+
+func handleAddCriterion(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	ids, err := requireIDs(req, "session_id", "story_id", "text")
+	if err != nil {
+		return toolError(err)
+	}
+	args := req.GetArguments()
+	c, err := parseCriterion(map[string]any{
+		"text": ids[2], "given": args["given"], "when": args["when"], "then": args["then"], "examples": args["examples"],
+	})
+	if err != nil {
+		return toolError(err)
+	}
+	_, st, err := session.AddCriterion(ids[0], ids[1], c)
+	if err != nil {
+		return toolError(err)
+	}
+	return resultJSON(st)
+}
+
+func constraintKinds() []string {
+	var out []string
+	for _, k := range session.ConstraintKinds {
+		out = append(out, string(k))
+	}
+	return out
+}
+
+func constraintOptions() []libmcp.ToolOption {
+	return []libmcp.ToolOption{
+		libmcp.WithString("kind", libmcp.Enum(constraintKinds()...), libmcp.Description("What kind of cross-functional requirement it is")),
+		libmcp.WithString("scope_kind", libmcp.Enum("map", session.KindSlice, session.KindStep, session.KindScreen), libmcp.Description("What it applies to; default map")),
+		libmcp.WithString("scope_id", libmcp.Description("ID of the slice, step or screen it applies to")),
+		libmcp.WithString("measure", libmcp.Description("What's measured, in the user's terms, e.g. 'the time to show the balance'")),
+		libmcp.WithString("target", libmcp.Description("The target, e.g. 'under 1 second for 95% of requests'. 'Fast' or 'easy' isn't one.")),
+		libmcp.WithString("notes", libmcp.Description("Optional notes")),
+		withSource(),
+	}
+}
+
+func addConstraintTool() libmcp.Tool {
+	opts := []libmcp.ToolOption{
+		libmcp.WithDescription("Record a constraint: a testable cross-functional requirement (performance, availability, security, privacy, accessibility, usability, compliance, operability, technology) with what's measured and its target. Emitted as a scenario in constraints.feature; a slice isn't ready while a constraint that applies to it lacks a measure or target."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("text", libmcp.Required(), libmcp.Description("The constraint, e.g. 'the register shows promptly'")),
+	}
+	return libmcp.NewTool("add_constraint", append(opts, constraintOptions()...)...)
+}
+
+func handleAddConstraint(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	ids, err := requireIDs(req, "session_id", "text")
+	if err != nil {
+		return toolError(err)
+	}
+	_, c, err := session.AddConstraint(ids[0], session.Constraint{
+		Text:      ids[1],
+		Kind:      session.ConstraintKind(req.GetString("kind", "")),
+		ScopeKind: req.GetString("scope_kind", ""),
+		ScopeID:   req.GetString("scope_id", ""),
+		Measure:   req.GetString("measure", ""),
+		Target:    req.GetString("target", ""),
+		Notes:     req.GetString("notes", ""),
+		Source:    session.Source(req.GetString("source", "")),
+	})
+	if err != nil {
+		return toolError(err)
+	}
+	return resultJSON(c)
+}
+
+func updateConstraintTool() libmcp.Tool {
+	opts := []libmcp.ToolOption{
+		libmcp.WithDescription("Edit a constraint. Omitted fields are unchanged. Remove one with remove_item (kind constraint)."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("constraint_id", libmcp.Required(), libmcp.Description("ID of the constraint")),
+		libmcp.WithString("text", libmcp.Description("New text")),
+	}
+	return libmcp.NewTool("update_constraint", append(opts, constraintOptions()...)...)
+}
+
+func handleUpdateConstraint(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	ids, err := requireIDs(req, "session_id", "constraint_id")
+	if err != nil {
+		return toolError(err)
+	}
+	var p session.ConstraintPatch
+	var kind *string
+	if err := optStringFields(req, map[string]**string{
+		"text": &p.Text, "scope_kind": &p.ScopeKind, "scope_id": &p.ScopeID,
+		"measure": &p.Measure, "target": &p.Target, "notes": &p.Notes, "kind": &kind,
+	}); err != nil {
+		return toolError(err)
+	}
+	if kind != nil {
+		k := session.ConstraintKind(*kind)
+		p.Kind = &k
+	}
+	if p.Source, err = optSource(req); err != nil {
+		return toolError(err)
+	}
+	_, c, err := session.UpdateConstraint(ids[0], ids[1], p)
+	if err != nil {
+		return toolError(err)
+	}
+	return resultJSON(c)
+}
+
+func checkReadinessTool() libmcp.Tool {
+	return libmcp.NewTool("check_readiness",
+		libmcp.WithDescription("Check whether each slice is ready for a factory, and what blocks it: stories without a why or acceptance criteria, steps with no screen (unless off_screen), steps using a command or read model their screen doesn't offer or show, outcomes that can't be read from the screen, offered commands with no domain behaviour, constraints without a measure and target, and glossary violations. Notes (UI mechanics in criteria, stories split by technical layer, offered commands no journey uses) don't block."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("slice_id", libmcp.Description("Only this slice")),
+	)
+}
+
+func handleCheckReadiness(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	sessionID, err := req.RequireString("session_id")
+	if err != nil {
+		return toolError(err)
+	}
+	s, err := session.Load(sessionID)
+	if err != nil {
+		return toolError(err)
+	}
+	r := session.Readiness(s)
+	if id := req.GetString("slice_id", ""); id != "" {
+		r = slices.DeleteFunc(r, func(x session.SliceReadiness) bool { return x.SliceID != id })
+		if len(r) == 0 {
+			return toolError(fmt.Errorf("slice %s not found", id))
+		}
+	}
+	return resultJSON(r)
+}
+
+func emitStoryMapTool() libmcp.Tool {
+	return libmcp.NewTool("emit_story_map",
+		libmcp.WithDescription("Emit the story map's specifications beside the storm's: per slice, one journey feature with a scenario per role (@running, @journey when taken through screens, @walking-skeleton on the skeleton); each story's acceptance criteria as scenarios; per screen, a scenario per read model it shows and per command it offers; constraints.feature; story-map/slices.json (each slice's readiness, build order and files); and story-map/story-map.json and .md. Features go under the screens' front-end context directory. Returns what was written, each slice's readiness, and glossary lint."),
+		libmcp.WithString("session_id", libmcp.Required(), libmcp.Description("Session ID")),
+		libmcp.WithString("output_dir", libmcp.Required(), libmcp.Description("Directory to write into, usually the same one the storm's specs go to")),
+		libmcp.WithArray("only", libmcp.WithStringItems(libmcp.Enum(gherkin.StoryMapOutputs...)),
+			libmcp.Description("Write only these outputs: journeys, stories, screens, constraints, slices, map. Default is all."),
+		),
+	)
+}
+
+func handleEmitStoryMap(_ context.Context, req libmcp.CallToolRequest) (*libmcp.CallToolResult, error) {
+	ids, err := requireIDs(req, "session_id", "output_dir")
+	if err != nil {
+		return toolError(err)
+	}
+	s, err := session.Load(ids[0])
+	if err != nil {
+		return toolError(err)
+	}
+	sum, err := gherkin.EmitStoryMap(s, ids[1], gherkin.StoryMapOptions{Only: req.GetStringSlice("only", nil)})
+	if err != nil {
+		return toolError(err)
+	}
+	return resultJSON(sum)
 }

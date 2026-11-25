@@ -26,10 +26,12 @@ internal/
     types.go    All storm types: Event, Command, Actor, Policy, ReadModel,
                 ExternalSystem, HotSpot, Aggregate, BoundedContext, GlossaryTerm, Session
     storymap.go Story-map types: StoryMap, Frame, Role, Activity, Step, Story,
-                Screen, Offer, Slice (Session.StoryMap)
+                Criterion, Screen, Offer, Slice, Constraint (Session.StoryMap)
     storymap_store.go  SetFrame, Add*/Update* for each story-map type,
                 AssignToSlice, MoveItem; story-map removal and storm cascades
     storymap_check.go  CheckLinks — the story map against the storm, both ways
+    storymap_ready.go  Readiness — per slice, what blocks it going to a factory;
+                OrderedSteps, SliceSteps, ScreenPhrase
     lock_unix.go / lock_other.go  flock around Save (no-op where unavailable)
     store.go    JSON-on-disk persistence ($XDG_DATA_HOME/event-storming-mcp/<id>/session.json)
                 Mutation functions: New, Load, Save, SetSyncPath, ExportSession,
@@ -48,6 +50,9 @@ internal/
     style.go    Text helpers: CamelCase → words, WhenStep, ThenStep, ScenarioTitle, Slug
     emit.go     Emit(session, dir, Options{Only}) — writes aggregate .feature files,
                 policies.feature per context, glossary.md, context-map.json
+    storymap.go EmitStoryMap(session, dir, StoryMapOptions{Only}) — journeys,
+                story criteria, screens, constraints, story-map/slices.json,
+                story-map.json and .md
 
   playbooks/
     playbooks.go  Embedded markdown registry; All() and Get(slug). Every tool a
@@ -197,7 +202,7 @@ array replaces the whole list.
 - `list_playbooks()` → [{ slug, title, description }] *(shared)*
 - `get_playbook(slug)` → markdown facilitation script *(shared)*
 
-## Stories server tools (29)
+## Stories server tools (34)
 
 `forgant-discovery serve stories`: the 13 shared tools (`start_session`,
 `resume_session`, `define_term`, `lint_steps`, `add_hot_spot`, `resolve_hotspot`,
@@ -209,16 +214,29 @@ array replaces the whole list.
   — a role is a storm actor; `actor_name` creates it; one role per actor
 - `update_role(session_id, role_id, goal?, frequency?, expertise?, persona?, source?)`
 - `add_activity(session_id, name, role_id?, notes?, before_id?, source?)` / `update_activity`
-- `add_step(session_id, activity_id, role_id, name, command_ids?, read_model_ids?, screen_id?, after_step_id?, notes?, before_id?, source?)` / `update_step`
-  — `after_step_id` is a hand-off: another role's step this one waits for
-- `add_story(session_id, step_id, title, why?, kind?, slice_id?, event_id?, notes?, before_id?, source?)` / `update_story`
+- `add_step(session_id, activity_id, role_id, name, command_ids?, read_model_ids?, screen_id?, after_step_id?, journey_when?, journey_then?, off_screen?, notes?, before_id?, source?)` / `update_step`
+  — `after_step_id` is a hand-off: another role's step this one waits for;
+  `journey_when`/`journey_then` are the step's journey text with concrete values
+  (the When must name the screen); `off_screen` gives the reason a step has no screen
+- `add_story(session_id, step_id, title, why?, kind?, slice_id?, event_id?, criteria?, notes?, before_id?, source?)` / `update_story`
   — kind: detail (default) | alternative | failure | misuse | spike
-- `add_screen(session_id, name, shows?, offers?: [{command_id, shows_after?}], notes?, source?)` / `update_screen`
-- `add_slice(session_id, name, kind, outcome?, walking_skeleton?, notes?, before_id?)` / `update_slice`
+- `add_criterion(session_id, story_id, text, given?, when?, then?, examples?: {columns, rows})`
+  — example mapping: the rule, a concrete Given/When/Then, optional Scenario Outline rows
+- `add_screen(session_id, name, context_id?, shows?, offers?: [{command_id, shows_after?}], notes?, source?)` / `update_screen`
+  — `context_id` is the front-end bounded context (surface) the screen belongs to
+- `add_slice(session_id, name, kind, outcome?, walking_skeleton?, preconditions?, notes?, before_id?)` / `update_slice`
+  — `preconditions` open every journey in the slice
   — kind: release | learning | development; at most one walking skeleton, a development slice
 - `assign_to_slice(session_id, slice_id, story_ids)`
 - `move_item(session_id, kind, id, before_id?)` — activity | step | story | slice
 - `check_links(session_id)` → { clean, counts, findings }
+- `add_constraint(session_id, text, kind?, scope_kind?, scope_id?, measure?, target?, notes?, source?)` / `update_constraint`
+  — kind: performance | availability | security | privacy | accessibility | usability |
+  compliance | operability | technology; scope: map | slice | step | screen
+- `check_readiness(session_id, slice_id?)` → [{ slice, ready, blocking, notes }]
+- `emit_story_map(session_id, output_dir, only?)` → { feature_files, slices_file,
+  map_files, scenario_count, slices (readiness), lint }; `only` is any of journeys |
+  stories | screens | constraints | slices | map
 
 List order is meaningful: activities and steps are narrative order (steps within
 their activity), stories are rank order within their step, slices are top to
@@ -227,12 +245,43 @@ steps or a step with stories is refused; other references are cleared. Removing
 a storm actor, command, read model or event detaches it from roles, steps,
 screens and stories.
 
+`Readiness` blocks a slice on: a story with no why or no criteria; a criterion without
+When and Then; a step with no command or read model, no role, or a command with no
+linked events; a step waiting on a step outside the slice; a step with no screen and
+no `off_screen`; a step using a command or read model its screen doesn't offer or
+show; a surface step whose outcome isn't readable from the screen (no `shows_after`
+on the offer, no `journey_then`); a `journey_when` that doesn't name its screen; an
+offered command with no domain behaviour; a constraint that applies without a measure
+and target; glossary lint in criteria and journey text. Notes (non-blocking): UI
+mechanics in criteria, story titles that sound split by technical layer, more than
+six criteria, offered commands no journey uses.
+
 `CheckLinks` warns about a step with no command or read model, a step with no
 role, a screen offering a command with no linked events, and a step using a
 command its screen doesn't offer. It notes commands no step uses and no policy
 issues (once the map has steps), read models no screen shows (once there are
 screens), and roles with no steps. It lints activity, step, story and screen text
 against the glossary.
+
+## Story-map emission
+
+`EmitStoryMap` writes beside the storm's specs. A screen's feature is
+`<context>/<screen>-screen.feature` (`@context:<c> @screen:<s>`): a scenario per read
+model it shows and per command it offers (the domain outcome, then what the screen
+shows after). A slice's journeys are one feature, `<context>/<slice>.feature`
+(`@running @slice:<s>`, plus `@walking-skeleton`), with one scenario per role
+(`@role:<r>`, plus `@journey` unless every step is off-screen). The slice's
+`preconditions` open each scenario; each step writes When (its `journey_when`, or the
+command's When text plus "on <the screen>") and Then (its `journey_then`, else the
+offer's `shows_after` read from the screen, else the command's unconditional event).
+A step with `after_step_id` is staged by replaying the other roles' steps up to the
+one waited for, as their Then lines turned to Givens. Each story's criteria are
+scenarios (Scenario Outline with example rows) in `<context>/<activity>.feature`,
+tagged `@story:` and `@slice:`. `constraints.feature` has one scenario per
+constraint ("Then <measure> is <target>"). `<context>` is the screens' front-end
+context, else `journeys/`, `stories/` or `screens/`. `story-map/slices.json` lists
+each slice's readiness, blocking items, notes and files in build order (the walking
+skeleton first). Every file is linted, and the tests parse them all.
 
 ## Validation Invariants
 
