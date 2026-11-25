@@ -7,7 +7,7 @@ import (
 
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/forgant-foundry/event-storming-mcp/internal/session"
+	"github.com/forgant-foundry/forgant-discovery/internal/session"
 )
 
 // Update tools take every field as optional: an omitted field is left

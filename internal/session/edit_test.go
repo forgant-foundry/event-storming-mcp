@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgant-foundry/event-storming-mcp/internal/session"
+	"github.com/forgant-foundry/forgant-discovery/internal/session"
 )
 
 func ptr[T any](v T) *T { return &v }

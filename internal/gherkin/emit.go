@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/forgant-foundry/event-storming-mcp/internal/session"
+	"github.com/forgant-foundry/forgant-discovery/internal/session"
 )
 
 // Outputs Emit can write. Options.Only selects a subset.

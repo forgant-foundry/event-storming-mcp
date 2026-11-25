@@ -6,8 +6,10 @@ mapping linked to the storm. The LLM drives the conversation; the servers own th
 grammar (event storming stencil, story map, Gherkin emission) and durable state.
 The story-mapping design, with its sources and phases, is `docs/story-mapping.md`.
 
-The repo and Go module are still `event-storming-mcp`; only the executable is
-renamed.
+The repo, Go module (`github.com/forgant-foundry/forgant-discovery`) and executable
+are all `forgant-discovery`; the project was `event-storming-mcp` until 2026-11.
+Two old names remain on purpose: the session data directory (below) and the
+`event-storming-mcp` key existing `.mcp.json` files use for the events server.
 
 ## Package Layout
 

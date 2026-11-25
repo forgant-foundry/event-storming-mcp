@@ -14,8 +14,6 @@ Connect them to an LLM like Claude and it acts as a structured facilitator. The 
 drives the conversation; the servers own the grammar and durable state. The story
 mapping design is in [`docs/story-mapping.md`](docs/story-mapping.md).
 
-(The repository is still named `event-storming-mcp`; the executable was renamed.)
-
 ## Output
 
 Each session produces:
@@ -37,7 +35,7 @@ can refresh the glossary and context map without overwriting hand-edited feature
 ## Build
 
 ```sh
-go install github.com/forgant-foundry/event-storming-mcp/cmd/forgant-discovery@latest
+go install github.com/forgant-foundry/forgant-discovery/cmd/forgant-discovery@latest
 # or, from a checkout:
 make install
 # binary at $(go env GOPATH)/bin/forgant-discovery — make sure that directory is on your PATH
@@ -46,7 +44,7 @@ make install
 Or `make build` to produce `./bin/forgant-discovery` without installing.
 
 Release binaries for linux, macOS and Windows are attached to each
-[GitHub release](https://github.com/forgant-foundry/event-storming-mcp/releases).
+[GitHub release](https://github.com/forgant-foundry/forgant-discovery/releases).
 Releases are cut by pushing a `v*` tag; CI runs gofmt, vet, race-enabled tests and
 govulncheck on every push and pull request.
 
@@ -97,8 +95,9 @@ To enable the server for one project, add it to that project's `.mcp.json`:
 }
 ```
 
-Keeping the key `event-storming-mcp` for the events server keeps its tool names
-(`mcp__event-storming-mcp__…`) unchanged for anything that refers to them.
+The key `event-storming-mcp` predates the rename; keeping it for the events server
+keeps its tool names (`mcp__event-storming-mcp__…`) unchanged for anything that
+refers to them. A new project can name it anything.
 
 Using the bare command name keeps the file portable; it requires the binary to be on
 the `PATH` of the shell that launches Claude Code.

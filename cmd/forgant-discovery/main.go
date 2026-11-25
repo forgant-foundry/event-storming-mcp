@@ -1,6 +1,6 @@
 package main
 
-import "github.com/forgant-foundry/event-storming-mcp/internal/cli"
+import "github.com/forgant-foundry/forgant-discovery/internal/cli"
 
 func main() {
 	cli.Execute()

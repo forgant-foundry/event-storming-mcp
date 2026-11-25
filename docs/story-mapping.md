@@ -251,9 +251,9 @@ and how it checks it.
      `forgant-discovery` with `["serve", "events"]`;
    - the README and `CLAUDE.md`.
 
-   The Go module path changes only if the repo is renamed too, which can be done
-   separately. During the switch, `event-storming-mcp` keeps working where it's
-   installed: it's the old binary, and nothing removes it until we do.
+   The repo and Go module were renamed to `forgant-discovery` too (2026-11-25).
+   During the switch, `event-storming-mcp` keeps working where it's installed:
+   it's the old binary, and nothing removes it until we do.
 2. **One session document.** The story map is a `story_map` section of the
    storm's session. Record IDs survive `import_session`; only the session ID
    changes. Both servers write the same file, so `Save` is revision-checked: it

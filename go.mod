@@ -1,4 +1,4 @@
-module github.com/forgant-foundry/event-storming-mcp
+module github.com/forgant-foundry/forgant-discovery
 
 go 1.25.5
 

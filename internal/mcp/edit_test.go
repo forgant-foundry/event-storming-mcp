@@ -7,7 +7,7 @@ import (
 
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/forgant-foundry/event-storming-mcp/internal/session"
+	"github.com/forgant-foundry/forgant-discovery/internal/session"
 )
 
 func call(t *testing.T, h func(context.Context, libmcp.CallToolRequest) (*libmcp.CallToolResult, error), args map[string]any) *libmcp.CallToolResult {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgant-foundry/event-storming-mcp/internal/playbooks"
+	"github.com/forgant-foundry/forgant-discovery/internal/playbooks"
 )
 
 func TestAll(t *testing.T) {

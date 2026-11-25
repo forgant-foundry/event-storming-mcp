@@ -7,7 +7,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 
-	mcpserver "github.com/forgant-foundry/event-storming-mcp/internal/mcp"
+	mcpserver "github.com/forgant-foundry/forgant-discovery/internal/mcp"
 )
 
 var serveCmd = &cobra.Command{

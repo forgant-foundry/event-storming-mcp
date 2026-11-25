@@ -7,8 +7,8 @@ import (
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/forgant-foundry/event-storming-mcp/internal/playbooks"
-	"github.com/forgant-foundry/event-storming-mcp/internal/session"
+	"github.com/forgant-foundry/forgant-discovery/internal/playbooks"
+	"github.com/forgant-foundry/forgant-discovery/internal/session"
 )
 
 // NewStories builds the story mapping server ("serve stories"). It shares
