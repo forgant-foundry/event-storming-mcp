@@ -251,7 +251,9 @@ and how it checks it.
      `forgant-discovery` with `["serve", "events"]`;
    - the README and `CLAUDE.md`.
 
-   The repo and Go module were renamed to `forgant-discovery` too (2026-11-25).
+   The repo and Go module were renamed too: to `forgant-discovery` (2026-11-25),
+   then `forgant-discovery-mcp` (2026-11-26), matching the other MCP repos. The
+   executable stays `forgant-discovery`.
    During the switch, `event-storming-mcp` keeps working where it's installed:
    it's the old binary, and nothing removes it until we do.
 2. **One session document.** The story map is a `story_map` section of the

@@ -11,8 +11,8 @@ import (
 
 	cucumber "github.com/cucumber/gherkin/go/v42"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/gherkin"
-	"github.com/forgant-foundry/forgant-discovery/internal/session"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/gherkin"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/session"
 )
 
 // parseFeatures runs every emitted feature file through the reference Gherkin

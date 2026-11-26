@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/session"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/session"
 )
 
 // camelWords splits PascalCase into lowercase words.

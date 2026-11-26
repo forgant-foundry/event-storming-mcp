@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/session"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/session"
 )
 
 func TestSessionLifecycle(t *testing.T) {

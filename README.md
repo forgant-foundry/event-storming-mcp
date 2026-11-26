@@ -1,4 +1,4 @@
-# forgant-discovery
+# forgant-discovery-mcp
 
 Two MCP servers for product discovery, in one binary, sharing one session:
 
@@ -35,7 +35,7 @@ can refresh the glossary and context map without overwriting hand-edited feature
 ## Build
 
 ```sh
-go install github.com/forgant-foundry/forgant-discovery/cmd/forgant-discovery@latest
+go install github.com/forgant-foundry/forgant-discovery-mcp/cmd/forgant-discovery@latest
 # or, from a checkout:
 make install
 # binary at $(go env GOPATH)/bin/forgant-discovery — make sure that directory is on your PATH
@@ -44,7 +44,7 @@ make install
 Or `make build` to produce `./bin/forgant-discovery` without installing.
 
 Release binaries for linux, macOS and Windows are attached to each
-[GitHub release](https://github.com/forgant-foundry/forgant-discovery/releases).
+[GitHub release](https://github.com/forgant-foundry/forgant-discovery-mcp/releases).
 Releases are cut by pushing a `v*` tag; CI runs gofmt, vet, race-enabled tests and
 govulncheck on every push and pull request.
 

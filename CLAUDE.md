@@ -1,4 +1,4 @@
-# forgant-discovery — Architecture
+# forgant-discovery-mcp — Architecture
 
 One binary, `forgant-discovery`, with two MCP servers that share a session:
 `serve events` facilitates event storming, and `serve stories` facilitates story
@@ -6,8 +6,11 @@ mapping linked to the storm. The LLM drives the conversation; the servers own th
 grammar (event storming stencil, story map, Gherkin emission) and durable state.
 The story-mapping design, with its sources and phases, is `docs/story-mapping.md`.
 
-The repo, Go module (`github.com/forgant-foundry/forgant-discovery`) and executable
-are all `forgant-discovery`; the project was `event-storming-mcp` until 2026-11.
+The repo and Go module are `forgant-discovery-mcp`
+(`github.com/forgant-foundry/forgant-discovery-mcp`), like the other `-mcp` repos;
+the executable is `forgant-discovery`, as `forgant-library-mcp`'s is
+`forgant-library`. The project was `event-storming-mcp` until 2026-11, then briefly
+`forgant-discovery`.
 Two old names remain on purpose: the session data directory (below) and the
 `event-storming-mcp` key existing `.mcp.json` files use for the events server.
 

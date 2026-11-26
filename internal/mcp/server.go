@@ -11,9 +11,9 @@ import (
 	libmcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/gherkin"
-	"github.com/forgant-foundry/forgant-discovery/internal/playbooks"
-	"github.com/forgant-foundry/forgant-discovery/internal/session"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/gherkin"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/playbooks"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/session"
 )
 
 // version reports the module version stamped by the Go toolchain: the release

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/gherkin"
-	"github.com/forgant-foundry/forgant-discovery/internal/session"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/gherkin"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/session"
 )
 
 // buildFinanceMap is a small finant-api: an accountant records a transaction

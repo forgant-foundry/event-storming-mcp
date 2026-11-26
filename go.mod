@@ -1,4 +1,4 @@
-module github.com/forgant-foundry/forgant-discovery
+module github.com/forgant-foundry/forgant-discovery-mcp
 
 go 1.25.5
 

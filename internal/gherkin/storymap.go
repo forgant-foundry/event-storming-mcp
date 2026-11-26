@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/session"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/session"
 )
 
 // Story-map outputs EmitStoryMap can write. StoryMapOptions.Only selects a subset.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/session"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/session"
 )
 
 // ledgerMap is a small storm plus story map: an accountant who opens a ledger

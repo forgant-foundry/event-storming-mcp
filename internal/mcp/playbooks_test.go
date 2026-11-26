@@ -6,7 +6,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/forgant-foundry/forgant-discovery/internal/playbooks"
+	"github.com/forgant-foundry/forgant-discovery-mcp/internal/playbooks"
 )
 
 // toolRef matches what a playbook writes when it means a tool: a call like
